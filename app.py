@@ -728,7 +728,7 @@ if __name__ == "__main__":
     try:
         # Get port from environment variable (Render requirement)
         port = int(os.environ.get("PORT", 8050))
-        app.run_server(debug=False, use_reloader=False, host="0.0.0.0", port=port)
+        app.run(debug=False, use_reloader=False, host="0.0.0.0", port=port)
     finally:
         # Ensure background thread is terminated when app stops
         keep_threads_running = False
