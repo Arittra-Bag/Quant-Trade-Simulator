@@ -2,10 +2,12 @@ dash
 dash-bootstrap-components
 plotly
 websockets
-asyncio
 numpy
+asyncio
 pandas
 scikit-learn
 google-generativeai
 xlsxwriter
-python-dotenv 
+python-dotenv
+gunicorn
+loguru 
