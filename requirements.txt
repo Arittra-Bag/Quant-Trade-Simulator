@@ -1,0 +1,11 @@
+dash
+dash-bootstrap-components
+plotly
+websockets
+asyncio
+numpy
+pandas
+scikit-learn
+google-generativeai
+xlsxwriter
+python-dotenv 
