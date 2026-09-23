@@ -1,0 +1,5350 @@
+{
+  "generated_at": "2026-09-23T20:45:08.154672+00:00",
+  "scenarios": [
+    "deep_small_buy",
+    "deep_large_buy",
+    "thin_book_oversized_buy",
+    "wide_spread_small_buy",
+    "bid_heavy_buy",
+    "ask_heavy_sell",
+    "thin_book_oversized_sell",
+    "absurd_size_buy"
+  ],
+  "summary": {
+    "rules": {
+      "scenarios": 8,
+      "score_sum": 8.0,
+      "critical": 0,
+      "latency_ms": 0.99,
+      "failed_checks": {},
+      "score": 1.0,
+      "mean_latency_ms": 0.12,
+      "clean_scenarios": 8
+    },
+    "legacy_prose": {
+      "scenarios": 8,
+      "score_sum": 3.6165000000000003,
+      "critical": 4,
+      "latency_ms": 0.19,
+      "failed_checks": {
+        "schema_clean": 8,
+        "quoted_the_order": 8,
+        "cost_grounded": 8,
+        "depth_honesty": 3,
+        "strategy_allowed": 3,
+        "side_fidelity": 2
+      },
+      "score": 0.4521,
+      "mean_latency_ms": 0.02,
+      "clean_scenarios": 4
+    },
+    "ungrounded": {
+      "scenarios": 8,
+      "score_sum": 4.533500000000001,
+      "critical": 3,
+      "latency_ms": 0.22999999999999998,
+      "failed_checks": {
+        "quoted_the_order": 8,
+        "cost_grounded": 8,
+        "depth_honesty": 3,
+        "strategy_allowed": 3
+      },
+      "score": 0.5667,
+      "mean_latency_ms": 0.03,
+      "clean_scenarios": 5
+    },
+    "depth_blind": {
+      "scenarios": 8,
+      "score_sum": 7.0001,
+      "critical": 3,
+      "latency_ms": 0.35,
+      "failed_checks": {
+        "depth_honesty": 3,
+        "strategy_allowed": 3
+      },
+      "score": 0.875,
+      "mean_latency_ms": 0.04,
+      "clean_scenarios": 5
+    },
+    "schema_drift": {
+      "scenarios": 8,
+      "score_sum": 6.383499999999999,
+      "critical": 3,
+      "latency_ms": 0.4,
+      "failed_checks": {
+        "schema_clean": 8,
+        "depth_honesty": 3,
+        "strategy_allowed": 3
+      },
+      "score": 0.7979,
+      "mean_latency_ms": 0.05,
+      "clean_scenarios": 5
+    },
+    "schedule_unpriced": {
+      "scenarios": 8,
+      "score_sum": 6.5866,
+      "critical": 3,
+      "latency_ms": 0.39999999999999997,
+      "failed_checks": {
+        "strategy_allowed": 2,
+        "schedule_grounded": 8,
+        "depth_honesty": 3
+      },
+      "score": 0.8233,
+      "mean_latency_ms": 0.05,
+      "clean_scenarios": 5
+    },
+    "derails": {
+      "scenarios": 8,
+      "score_sum": 0.0,
+      "critical": 8,
+      "latency_ms": 0.32999999999999996,
+      "failed_checks": {
+        "produced_advice": 8,
+        "schema_clean": 8,
+        "quoted_the_order": 8,
+        "side_fidelity": 8,
+        "cost_grounded": 8,
+        "strategy_allowed": 8,
+        "tool_economy": 8,
+        "tools_succeeded": 8,
+        "depth_honesty": 3
+      },
+      "score": 0.0,
+      "mean_latency_ms": 0.04,
+      "clean_scenarios": 0
+    }
+  },
+  "rows": [
+    {
+      "candidate": "rules",
+      "scenario": "deep_small_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.8,
+        "expected_cost_bps": 8.3436,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Mid 65,000.00 with a 0.3 bps spread and $66,807,680 of visible depth across both sides, imbalance +0.00. A $1,000 buy quotes at 8.3 bps all-in.",
+        "reasoning": "The book absorbs the order in 1 levels at 8.3 bps all-in. The spread is tight and there is nothing to gain by waiting.",
+        "execution_approach": "Send the full buy as one market order now.",
+        "risks": [
+          "Immediate execution locks in the current book; a better price may appear moments later."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 3,
+      "latency_ms": 0.13,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "deep_large_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.8,
+        "expected_cost_bps": 18.2213,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Mid 65,000.00 with a 0.3 bps spread and $66,807,680 of visible depth across both sides, imbalance +0.00. A $750,000 buy quotes at 18.2 bps all-in.",
+        "reasoning": "The book absorbs the order in 6 levels at 18.2 bps all-in. The spread is tight and there is nothing to gain by waiting.",
+        "execution_approach": "Send the full buy as one market order now.",
+        "risks": [
+          "Immediate execution locks in the current book; a better price may appear moments later."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 3,
+      "latency_ms": 0.1,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "thin_book_oversized_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": true,
+          "weight": 3.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.6,
+        "expected_cost_bps": 172.6364,
+        "slices": 4,
+        "horizon_seconds": 120,
+        "limit_price": 0.0,
+        "analysis": "Mid 1.25 with a 4.0 bps spread and $480,732 of visible depth across both sides, imbalance +0.00. A $400,000 buy quotes at 172.6 bps all-in, and does not fit inside the visible book.",
+        "reasoning": "The order runs past the visible book, so a single clip would be filled at prices the book does not currently show. Working it in slices lets depth replenish.",
+        "execution_approach": "Work the buy as 4 equal clips over roughly 120 seconds.",
+        "risks": [
+          "Modelled slice saving assumes the book refreshes between clips; real depth recovers only partly.",
+          "Spreading the order over time adds exposure to the price drifting away."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_depth_profile",
+        "compare_schedule"
+      ],
+      "turns": 4,
+      "latency_ms": 0.18,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "wide_spread_small_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.65,
+        "expected_cost_bps": 30.1801,
+        "slices": 4,
+        "horizon_seconds": 120,
+        "limit_price": 0.0,
+        "analysis": "Mid 3,450.00 with a 28.0 bps spread and $438,460 of visible depth across both sides, imbalance +0.00. A $5,000 buy quotes at 30.2 bps all-in.",
+        "reasoning": "A single clip costs 30.2 bps; 4 slices model out 4.1 bps cheaper.",
+        "execution_approach": "Work the buy as 4 equal clips over roughly 120 seconds.",
+        "risks": [
+          "The modelled saving is an upper bound and ignores timing risk."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_depth_profile",
+        "compare_schedule"
+      ],
+      "turns": 4,
+      "latency_ms": 0.15,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "bid_heavy_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.8,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Mid 65,000.00 with a 0.3 bps spread and $120,242,947 of visible depth across both sides, imbalance +0.44. A $25,000 buy quotes at 8.9 bps all-in.",
+        "reasoning": "The book absorbs the order in 1 levels at 8.9 bps all-in. The spread is tight and there is nothing to gain by waiting.",
+        "execution_approach": "Send the full buy as one market order now.",
+        "risks": [
+          "Immediate execution locks in the current book; a better price may appear moments later."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 3,
+      "latency_ms": 0.08,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "ask_heavy_sell",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bearish",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "high",
+        "confidence": 0.8,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Mid 65,000.00 with a 0.3 bps spread and $120,264,700 of visible depth across both sides, imbalance -0.44. A $25,000 sell quotes at 8.9 bps all-in.",
+        "reasoning": "The book absorbs the order in 1 levels at 8.9 bps all-in. The spread is tight and there is nothing to gain by waiting.",
+        "execution_approach": "Send the full sell as one market order now.",
+        "risks": [
+          "Immediate execution locks in the current book; a better price may appear moments later."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 3,
+      "latency_ms": 0.07,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "thin_book_oversized_sell",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": true,
+          "weight": 3.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "sell",
+        "urgency": "low",
+        "confidence": 0.6,
+        "expected_cost_bps": 170.6366,
+        "slices": 4,
+        "horizon_seconds": 120,
+        "limit_price": 0.0,
+        "analysis": "Mid 1.25 with a 4.0 bps spread and $480,732 of visible depth across both sides, imbalance +0.00. A $400,000 sell quotes at 170.6 bps all-in, and does not fit inside the visible book.",
+        "reasoning": "The order runs past the visible book, so a single clip would be filled at prices the book does not currently show. Working it in slices lets depth replenish.",
+        "execution_approach": "Work the sell as 4 equal clips over roughly 120 seconds.",
+        "risks": [
+          "Modelled slice saving assumes the book refreshes between clips; real depth recovers only partly.",
+          "Spreading the order over time adds exposure to the price drifting away."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_depth_profile",
+        "compare_schedule"
+      ],
+      "turns": 4,
+      "latency_ms": 0.14,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "rules",
+      "scenario": "absurd_size_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": true,
+          "weight": 3.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "wait",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.75,
+        "expected_cost_bps": 71019.1768,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Mid 0.08 with a 15.0 bps spread and $40,202 of visible depth across both sides, imbalance +0.00. A $50,000,000 buy quotes at 71019.2 bps all-in, and does not fit inside the visible book.",
+        "reasoning": "Order is $50,000,000 against $40,202 of visible depth. There is no responsible way to size this into this book.",
+        "execution_approach": "Do not send this order into the current book.",
+        "risks": [
+          "Standing aside carries the risk that the price moves away before liquidity arrives."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_depth_profile",
+        "compare_schedule"
+      ],
+      "turns": 4,
+      "latency_ms": 0.14,
+      "model": "rules-v1",
+      "errors": []
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "deep_small_buy",
+      "score": 0.5833,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $1,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 8.34 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.03,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "deep_large_buy",
+      "score": 0.5833,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $750,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 18.22 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.02,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.3333,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $400,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 172.64 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.02,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "wide_spread_small_buy",
+      "score": 0.5833,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $5,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 30.18 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.02,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "bid_heavy_buy",
+      "score": 0.5833,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $25,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 8.87 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.02,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "ask_heavy_sell",
+      "score": 0.4167,
+      "critical_failures": [
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $25,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "prose describes a buy while the order is a sell",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 8.87 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.02,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.2,
+      "critical_failures": [
+        "side_fidelity",
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $400,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "prose describes a buy while the order is a sell",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 170.64 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.03,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "legacy_prose",
+      "scenario": "absurd_size_buy",
+      "score": 0.3333,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "7 repair(s): missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $50,000,000; called nothing",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 0.00 bps, book quotes 71019.18 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market not in allowed ['wait']",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Bullish",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.0,
+        "expected_cost_bps": 0.0,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "Bids outweigh asks across the top ten levels and the spread is tight, which points to short-term buying pressure.",
+        "reasoning": "The book looks liquid enough to absorb the order without much slippage.",
+        "execution_approach": "Send the buy as a single market order.",
+        "risks": []
+      },
+      "tool_calls": [],
+      "turns": 1,
+      "latency_ms": 0.03,
+      "model": "legacy-prose",
+      "errors": [
+        "missing fields: confidence, expected_cost_bps, horizon_seconds, order_side, risks, slices, urgency",
+        "urgency None not in ('low', 'medium', 'high')",
+        "order_side None not in ('buy', 'sell')",
+        "confidence is not a number",
+        "expected_cost_bps is not a number",
+        "horizon_seconds is not a number",
+        "limit_price is not a number"
+      ]
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "deep_small_buy",
+      "score": 0.6667,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $1,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 8.34 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "deep_large_buy",
+      "score": 0.6667,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $750,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 18.22 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.03,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.4,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $400,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 172.64 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.03,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "wide_spread_small_buy",
+      "score": 0.6667,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $5,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 30.18 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.03,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "bid_heavy_buy",
+      "score": 0.6667,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $25,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 8.87 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.02,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "ask_heavy_sell",
+      "score": 0.6667,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $25,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 8.87 bps",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.4,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $400,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 170.64 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.02,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "ungrounded",
+      "scenario": "absurd_size_buy",
+      "score": 0.4,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $50,000,000; called ['get_book_stats']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "claimed 3.50 bps, book quotes 71019.18 bps",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market not in allowed ['wait']",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 0.8,
+        "expected_cost_bps": 3.5,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The spread is tight and there is size on both sides of the book.",
+        "reasoning": "Costs look modest for an order of this size.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": []
+      },
+      "tool_calls": [
+        "get_book_stats"
+      ],
+      "turns": 2,
+      "latency_ms": 0.02,
+      "model": "ungrounded",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "deep_small_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.3436,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "deep_large_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 18.2213,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.6667,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 172.6364,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "wide_spread_small_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 30.1801,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "bid_heavy_buy",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "ask_heavy_sell",
+      "score": 1.0,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.6667,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 170.6366,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "depth_blind",
+      "scenario": "absurd_size_buy",
+      "score": 0.6667,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market not in allowed ['wait']",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "high",
+        "confidence": 0.7,
+        "expected_cost_bps": 71019.1768,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "depth-blind",
+      "errors": []
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "deep_small_buy",
+      "score": 0.9167,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 8.3436,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "deep_large_buy",
+      "score": 0.9167,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 18.2213,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.6,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 172.6364,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.06,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "wide_spread_small_buy",
+      "score": 0.9167,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 30.1801,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "bid_heavy_buy",
+      "score": 0.9167,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "ask_heavy_sell",
+      "score": 0.9167,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 8.873,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.6,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market is ruled out for this book",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "sell",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 170.6366,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schema_drift",
+      "scenario": "absurd_size_buy",
+      "score": 0.6,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "3 repair(s): urgency 'urgent' not in ('low', 'medium', 'high')",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "book cannot fill the order but advised immediate_market",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "immediate_market not in allowed ['wait']",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "immediate_market",
+        "order_side": "buy",
+        "urgency": "medium",
+        "confidence": 1.0,
+        "expected_cost_bps": 71019.1768,
+        "slices": 1,
+        "horizon_seconds": 0,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "none"
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.07,
+      "model": "schema-drift",
+      "errors": [
+        "urgency 'urgent' not in ('low', 'medium', 'high')",
+        "confidence 1.8 outside 0.0-1.0",
+        "strategy immediate_market is a single clip but slices is 4"
+      ]
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "deep_small_buy",
+      "score": 0.7692,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "twap not in allowed ['immediate_market']",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.3436,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.09,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "deep_large_buy",
+      "score": 0.9231,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 18.2213,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.75,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "never says the order runs past the visible book",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 172.6364,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "wide_spread_small_buy",
+      "score": 0.9231,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 30.1801,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "bid_heavy_buy",
+      "score": 0.9231,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.873,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "ask_heavy_sell",
+      "score": 0.9231,
+      "critical_failures": [],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "sell",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 8.873,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.05,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.75,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "never says the order runs past the visible book",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "sell",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 170.6366,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the sell as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "schedule_unpriced",
+      "scenario": "absurd_size_buy",
+      "score": 0.625,
+      "critical_failures": [
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": true,
+          "weight": 1.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": true,
+          "weight": 2.0,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "never says the order runs past the visible book",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "twap not in allowed ['wait']",
+          "critical": false
+        },
+        {
+          "name": "schedule_grounded",
+          "passed": false,
+          "weight": 1.0,
+          "note": "advised a schedule without calling compare_schedule",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": true,
+          "weight": 0.5,
+          "note": "",
+          "critical": false
+        }
+      ],
+      "advice": {
+        "sentiment": "Neutral",
+        "strategy": "twap",
+        "order_side": "buy",
+        "urgency": "low",
+        "confidence": 0.7,
+        "expected_cost_bps": 71019.1768,
+        "slices": 5,
+        "horizon_seconds": 150,
+        "limit_price": 0.0,
+        "analysis": "The book shows size on both sides and the order prices out reasonably.",
+        "reasoning": "Taking it now avoids exposure to the price moving.",
+        "execution_approach": "Send the buy as one market order.",
+        "risks": [
+          "The current book may not hold."
+        ]
+      },
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 2,
+      "latency_ms": 0.04,
+      "model": "schedule-unpriced",
+      "errors": []
+    },
+    {
+      "candidate": "derails",
+      "scenario": "deep_small_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $1,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.05,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "deep_large_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $750,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "thin_book_oversized_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity",
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $400,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "wide_spread_small_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $5,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "bid_heavy_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $25,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "ask_heavy_sell",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $25,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "thin_book_oversized_sell",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity",
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for sell $400,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    },
+    {
+      "candidate": "derails",
+      "scenario": "absurd_size_buy",
+      "score": 0.0,
+      "critical_failures": [
+        "produced_advice",
+        "side_fidelity",
+        "depth_honesty"
+      ],
+      "checks": [
+        {
+          "name": "produced_advice",
+          "passed": false,
+          "weight": 2.0,
+          "note": "hit the 6-turn ceiling without producing advice",
+          "critical": true
+        },
+        {
+          "name": "schema_clean",
+          "passed": false,
+          "weight": 1.0,
+          "note": "1 repair(s): hit the 6-turn ceiling without producing advice",
+          "critical": false
+        },
+        {
+          "name": "quoted_the_order",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no quote_order for buy $50,000,000; called ['get_book_stats', 'quote_order', 'get_book_stats', 'quote_order', 'get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "side_fidelity",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "cost_grounded",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "depth_honesty",
+          "passed": false,
+          "weight": 3.0,
+          "note": "no advice",
+          "critical": true
+        },
+        {
+          "name": "strategy_allowed",
+          "passed": false,
+          "weight": 2.0,
+          "note": "no advice",
+          "critical": false
+        },
+        {
+          "name": "tool_economy",
+          "passed": false,
+          "weight": 0.5,
+          "note": "repeated identical calls: ['get_book_stats', 'quote_order']",
+          "critical": false
+        },
+        {
+          "name": "tools_succeeded",
+          "passed": false,
+          "weight": 0.5,
+          "note": "tool errors: ['quote_order']",
+          "critical": false
+        }
+      ],
+      "advice": null,
+      "tool_calls": [
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order",
+        "get_book_stats",
+        "quote_order"
+      ],
+      "turns": 6,
+      "latency_ms": 0.04,
+      "model": "derails",
+      "errors": [
+        "hit the 6-turn ceiling without producing advice"
+      ]
+    }
+  ]
+}
