@@ -1,13 +1,12 @@
-dash
-dash-bootstrap-components
-plotly
-websockets
-numpy
-asyncio
-pandas
-scikit-learn
-google-generativeai
-xlsxwriter
-python-dotenv
-gunicorn
-loguru 
+# Pinned so a redeploy cannot silently pull in breaking releases.
+dash==4.4.1
+plotly==7.1.0
+websockets==16.1.1
+numpy==2.4.6
+pandas==3.0.6
+scikit-learn==1.9.1
+google-genai==2.25.0
+xlsxwriter==3.2.9
+python-dotenv==1.2.3
+gunicorn==26.2.0
+loguru==0.7.3

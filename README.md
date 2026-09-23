@@ -1,66 +1,61 @@
 # Quant Trade Simulator
 
-A high-performance trade simulator leveraging real-time L2 orderbook data from OKX via WebSocket, with transaction cost and market impact estimation. Built with Python and Dash.
+A pre-trade transaction cost simulator on live L2 orderbook data. Pick a venue and instrument, size an order, and see what it would cost right now: slippage from walking the actual book, market impact, fees, maker/taker split, and the fill's VWAP on the ladder and depth chart. Built with Python, Dash and Plotly.
 
 ## Features
-- Real-time L2 orderbook data processing with multi-endpoint fallback
-- Slippage, fee, and market impact estimation
-- Professional Dash/Plotly UI with Bootstrap styling
-- Performance and latency metrics
-- AI-powered market analysis using Google's Gemini
-- Comprehensive documentation and performance analysis
+- Live L2 books from OKX (`books5`), Hyperliquid, Binance USD-M futures or Kraken, with automatic fallback when a venue is unreachable or silent, plus a simulated feed for offline demos
+- Sizes normalised to base units (OKX swap contracts are converted with the contract value)
+- Walk-the-book slippage, volatility-scaled Almgren-Chriss impact, tiered fees, all shown in USD and bps
+- Price ladder with depth bars and the levels your order would consume highlighted
+- Honest feed status: live, connecting, stale or offline, with the last error
+- Calculation latency with p50 / p99
+- CSV and Excel export of the current book
+- Optional Gemini read on the book and your order
 
 ## Setup
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Set up environment variables:
-   - Create a `.env` file in the project root
-   - Add `GEMINI_API_KEY=your_key_here` for AI market analysis
-   - Or set this environment variable in your system
-   
-4. Run the app:
-   ```bash
-   python app.py
-   ```
+```bash
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-## Main Components
-- `app.py`: Dash application entry point
-- `websocket_client.py`: WebSocket client for L2 orderbook
-- `models.py`: Slippage, market impact, and regression models
-- `fee_model.py`: Fee calculation logic
-- `utils.py`: Helper functions (latency, logging, etc.)
-- `gemini_integration.py`: AI-powered market analysis
+Optional, for the AI panel: create a `.env` file (never committed) with
+```
+GEMINI_API_KEY=your_key_here
+# GEMINI_MODEL=gemini-2.5-flash
+```
 
-## Documentation
-The project includes comprehensive documentation:
+## Run
+```bash
+python app.py            # or ./start.sh; serves on $PORT (default 8050)
+```
+Open http://localhost:8050, choose a venue and press **Start stream**. Choose **Simulated** if exchange feeds are blocked where you run it.
 
-- `DOCUMENTATION.md`: Detailed explanation of models, algorithms, and implementation
-- `PERFORMANCE_ANALYSIS.md`: Performance benchmarks and optimization techniques
+The feed client also runs on its own:
+```bash
+python websocket_client.py --symbol BTC-USDT-SWAP --exchange OKX
+```
+It writes `latest_orderbook.json` and `feed_status.json`. `ORDERBOOK_WS_URL_<VENUE>` (for example `ORDERBOOK_WS_URL_OKX`) overrides a venue's endpoint.
 
-## Models Implemented
-1. **Linear Regression for Slippage Estimation**
-   - Predicts expected slippage based on order size and market volatility
+## Tests
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+The tests are offline: they cover every venue parser, the cost models, the exports, and the client against local WebSocket servers (including falling back from a venue that accepts but never sends data).
 
-2. **Almgren-Chriss Model for Market Impact**
-   - Estimates both permanent and temporary price impacts
-   - Accounts for order size, execution time, and market liquidity
+## Main components
+- `app.py`: Dash app, layout and callbacks
+- `assets/theme.css`: the trading-desk theme (served automatically by Dash)
+- `websocket_client.py`: multi-venue orderbook client
+- `models.py`: slippage, market impact, maker/taker and book statistics
+- `fee_model.py`: tiered fee model
+- `visualizations.py`: depth, cost and latency charts
+- `gemini_integration.py`: Gemini analysis
+- `export.py`: CSV and Excel export
 
-3. **Logistic Regression for Maker/Taker Proportion**
-   - Predicts probability of order executing as maker vs. taker
-   - Uses order size and current market spread as features
+See `DOCUMENTATION.md` for the models and `PERFORMANCE_ANALYSIS.md` for performance notes.
 
-4. **Rule-based Fee Model**
-   - Calculates expected fees based on exchange fee tiers
-
-5. **AI Market Analysis**
-   - Uses Google's Gemini AI to analyze orderbook data
-   - Provides market sentiment and trading strategy recommendations
-
-## Future Enhancements
-- Implement real-time model training based on market data
-- Add more sophisticated market impact models
-- Integrate with exchange APIs for actual order placement
-- Develop advanced trade strategy backtesting 
+## Notes
+- One feed runs per server process and is shared by everyone who opens the page, so treat a public deployment as single-user.
+- Binance and OKX restrict some regions; the client falls through to the next venue and the header shows which one is live.

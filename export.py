@@ -78,9 +78,10 @@ def export_orderbook_to_excel(orderbook_data):
         
         # Create metadata sheet
         metadata = pd.DataFrame({
-            'Property': ['Symbol', 'Timestamp', 'Export Time'],
+            'Property': ['Symbol', 'Source', 'Timestamp', 'Export Time'],
             'Value': [
                 orderbook_data.get('symbol', ''),
+                orderbook_data.get('source', ''),
                 orderbook_data.get('timestamp', ''),
                 datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ]
@@ -98,9 +99,9 @@ def export_orderbook_to_excel(orderbook_data):
         })
         
         # Add header formatting to all sheets
-        for sheet_name in ['Bids', 'Asks', 'Metadata']:
+        for sheet_name, df in [('Bids', bids_df), ('Asks', asks_df), ('Metadata', metadata)]:
             worksheet = writer.sheets[sheet_name]
-            for col_num, value in enumerate(writer.sheets[sheet_name].table[0]):
+            for col_num, value in enumerate(df.columns):
                 worksheet.write(0, col_num, value, header_format)
     
     # Get the content
