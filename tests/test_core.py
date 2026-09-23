@@ -18,6 +18,7 @@ from fee_model import calculate_fees, fee_rates  # noqa: E402
 from models import (VolatilityTracker, book_stats, estimate_costs,  # noqa: E402
                     estimate_market_impact, estimate_slippage, measure_volatility,
                     predict_maker_taker, timing_risk, walk_book)
+from validation import record as rec  # noqa: E402
 from validation.validate import build_samples, evaluate, fit_permanent_share  # noqa: E402
 
 BOOK = {
@@ -312,6 +313,58 @@ def test_permanent_share_fit_recovers_a_known_slope_and_flags_noise():
     rng = random.Random(3)
     noisy = [{"predicted_end_bps": 1.0, "realised_perm_bps": rng.gauss(0, 5)} for _ in range(200)]
     assert abs(fit_permanent_share(noisy)["t"]) < 2
+
+
+def test_permanent_share_is_rejected_when_the_trades_never_left_the_touch():
+    """A real 10-minute BTC recording fitted a share of 2.6: 400k rests at the touch, so
+    nothing walked the book and the fit was dividing mid drift by almost no displacement.
+    A significant t-statistic is not enough to trust it."""
+    import random
+    rng = random.Random(5)
+    flat = [{"predicted_end_bps": 0.01, "realised_perm_bps": 0.026 + rng.gauss(0, 0.001)}
+            for _ in range(250)]
+    fit = fit_permanent_share(flat)
+    assert abs(fit["t"]) > 2 and fit["usable"] is False
+    assert fit["x_median_bps"] < 0.5
+
+
+def test_permanent_share_is_rejected_when_more_persists_than_the_trade_caused():
+    over = [{"predicted_end_bps": x, "realised_perm_bps": 2.5 * x} for x in range(1, 40)]
+    assert fit_permanent_share(over)["usable"] is False
+
+
+def test_permanent_share_is_usable_when_the_book_was_actually_walked():
+    good = [{"predicted_end_bps": x, "realised_perm_bps": 0.45 * x} for x in range(1, 40)]
+    fit = fit_permanent_share(good)
+    assert fit["usable"] is True and fit["slope"] == pytest.approx(0.45)
+
+
+def test_recorder_sends_a_user_agent():
+    """OKX answers urllib's default agent with 403, which made the recorder write an
+    empty file and read as a quiet market rather than as a failure."""
+    import io
+    import urllib.request
+
+    seen = {}
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    def fake_urlopen(req, timeout=None):
+        seen["ua"] = req.get_header("User-agent")
+        return FakeResponse(b'{"data": []}')
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        rec._get("https://example.invalid/whatever")
+    finally:
+        urllib.request.urlopen = original
+    assert seen["ua"] == rec.USER_AGENT and "urllib" not in seen["ua"]
 
 
 def test_validation_ignores_windows_with_no_trades():

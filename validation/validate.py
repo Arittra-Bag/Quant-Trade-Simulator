@@ -35,6 +35,10 @@ from models import walk_book  # noqa: E402
 
 BUCKETS = [(0, 1e3), (1e3, 1e4), (1e4, 1e5), (1e5, 1e6), (1e6, float("inf"))]
 
+# Below this much predicted displacement the trades never left the touch, so a fitted
+# permanent share is dividing price noise by nothing and means nothing.
+MIN_DISPLACEMENT_BPS = 0.5
+
 
 def load_records(path):
     books, trades = [], []
@@ -98,6 +102,7 @@ def build_samples(books, trades, window_s=2.0, min_usd=500.0, side="buy"):
             "predicted_end_bps": fill["end_bps"],
             "realised_perm_bps": (sign * (mid_later - mid) / mid * 1e4) if mid_later else None,
             "complete": fill["complete"],
+            "levels": fill["levels"],
         })
     return samples
 
@@ -125,6 +130,7 @@ def evaluate(samples):
         "predicted_bps": _stats([s["predicted_bps"] for s in samples]),
         "realised_bps": _stats([s["realised_bps"] for s in samples]),
         "under_costed_pct": 100 * sum(1 for e in errors if e < 0) / len(errors) if errors else None,
+        "single_level_pct": 100 * sum(1 for s in samples if s["levels"] <= 1) / len(samples) if samples else None,
         "buckets": [],
         "permanent_share": None,
     }
@@ -162,12 +168,18 @@ def fit_permanent_share(samples):
     slope = sxy / sxx
     resid = sum((y - slope * x) ** 2 for x, y in pts) / (len(pts) - 1)
     stderr = math.sqrt(resid / sxx)
+    t = slope / stderr if stderr > 0 else float("inf")
+    x_median = statistics.median([x for x, _ in pts])
     return {
         "n": len(pts),
         "slope": slope,
         "stderr": stderr,
-        "t": slope / stderr if stderr > 0 else float("inf"),
+        "t": t,
+        "x_median_bps": x_median,
         "median_ratio": statistics.median([y / x for x, y in pts]),
+        # A share above 1 means more displacement persisted than the trade caused, which
+        # is the mid wandering rather than impact. Below 0 is the same thing with a sign.
+        "usable": abs(t) >= 2 and 0.0 <= slope <= 1.0 and x_median >= MIN_DISPLACEMENT_BPS,
     }
 
 
@@ -197,7 +209,18 @@ def format_report(result, source, window_s):
         f"| error (predicted - realised) | {_fmt(result['error_bps'])} |",
         f"| absolute error | {_fmt(result['abs_error_bps'])} |",
         f"| samples where the model under-costed | {result['under_costed_pct']:.0f}% |",
+        f"| samples filled inside the touch | {result['single_level_pct']:.0f}% |",
         "",
+    ]
+    if (result["single_level_pct"] or 0) > 90:
+        lines += [
+            "**This recording does not test the model.** Nearly every sample filled inside the",
+            "best level, so the walk never left the touch and the depth extrapolation was never",
+            "exercised. Record a thinner instrument or compare against larger sweeps before",
+            "reading anything into the error column.",
+            "",
+        ]
+    lines += [
         "## By order size",
         "",
         "| notional | n | predicted | realised | error |",
@@ -211,14 +234,21 @@ def format_report(result, source, window_s):
     lines += ["", "## Permanent impact", ""]
     if not share:
         lines.append("Not enough paired samples to measure the permanent share.")
-    elif abs(share["t"]) < 2:
+    elif not share["usable"]:
         lines += [
-            f"Fitted share of the predicted displacement still in the mid one window later: "
-            f"**{share['slope']:.2f} ± {share['stderr']:.2f}** (n={share['n']}).",
+            f"Fitted share: {share['slope']:.2f} ± {share['stderr']:.2f} (n={share['n']}, "
+            f"median predicted displacement {share['x_median_bps']:.2f} bps).",
             "",
-            "That is inside two standard errors of zero, so this recording cannot tell the",
-            "permanent share apart from noise. Record a longer or busier session before",
-            "moving PERMANENT_SHARE off its default.",
+            "**Do not use this number.** " + (
+                "The trades in this recording barely left the touch, so the fit is dividing "
+                "price drift by a displacement of almost nothing."
+                if share["x_median_bps"] < MIN_DISPLACEMENT_BPS else
+                "The fit is inside two standard errors of zero." if abs(share["t"]) < 2 else
+                "A share outside 0 to 1 means the mid wandered for reasons that have nothing "
+                "to do with the trade."),
+            "",
+            "Leave PERMANENT_SHARE where it is and record a session whose orders actually",
+            "walk the book: a thinner instrument, or a venue where the touch holds less.",
         ]
     else:
         lines += [

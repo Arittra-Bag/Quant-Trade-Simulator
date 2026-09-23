@@ -13,6 +13,9 @@ the live feed does.
 
 Usage:
     python -m validation.record --symbol BTC-USDT-SWAP --minutes 10 --out validation/data/okx.jsonl
+
+On a python.org build for macOS, point SSL_CERT_FILE at certifi first
+(`export SSL_CERT_FILE=$(python -m certifi)`) or every request fails to verify.
 """
 import argparse
 import json
@@ -23,9 +26,14 @@ import urllib.request
 OKX_REST = "https://www.okx.com/api/v5"
 BOOK_DEPTH = 25
 
+# OKX answers urllib's default "Python-urllib/3.x" agent with 403, which made the
+# recorder write an empty file and look like a quiet market rather than a failure.
+USER_AGENT = "quant-trade-simulator/1.0"
+
 
 def _get(url, timeout=10):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 
@@ -75,6 +83,10 @@ def record(symbol="BTC-USDT-SWAP", minutes=10.0, interval=0.5, out="validation/d
                 print(f"record error: {e}")
             time.sleep(interval)
     print(f"wrote {books} books and {trades} trades to {out}")
+    if not books:
+        raise SystemExit(
+            "recorded nothing: every request failed. Check network access to OKX, and on "
+            "macOS python.org builds set SSL_CERT_FILE=$(python -m certifi).")
     return out
 
 
