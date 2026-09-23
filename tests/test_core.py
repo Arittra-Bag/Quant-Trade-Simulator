@@ -451,48 +451,48 @@ def test_client_falls_back_when_venue_accepts_but_sends_nothing(tmp_path, monkey
     assert json.loads(out.read_text())["source"] == "HYPERLIQUID"
 
 
-# ----------------------------------------------------------------------------- gemini model fallback
+# ------------------------------------------------------------------- advisor adapter (gemini_integration)
+# The model fallback, the tool loop and the output schema are covered in tests/test_advisor.py.
+# What is checked here is only the seam the Dash app calls through.
 
-class _NotFound(Exception):
-    code = 404
-
-
-class _FakeModels:
-    def __init__(self, unavailable):
-        self.unavailable, self.calls = unavailable, []
-
-    def generate_content(self, model, contents, config):
-        self.calls.append(model)
-        if model in self.unavailable:
-            raise _NotFound(f"404 NOT_FOUND. models/{model} is no longer available to new users")
-        return type("R", (), {"text": '{"sentiment": "Neutral", "analysis": "ok", "strategy": "Immediate market"}'})()
-
-
-def _analyzer(unavailable):
+def test_adapter_falls_back_to_the_baseline_without_a_key():
     import gemini_integration as gi
-    a = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
-    a.client = type("C", (), {"models": _FakeModels(unavailable)})()
-    a.models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
-    a.model, a.last_call_time, a.min_interval = a.models[0], 0, 0
-    return a
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = None, ["m"], "m", 0
+    result = analyzer.analyze(BOOK, 100, side="buy", fee_tier="Tier 1", volatility=0.01)
+    assert result["success"] and result["source"] == "baseline"
+    assert result["tool_calls"][:2] == ["get_book_stats", "quote_order"]
 
 
-def test_gemini_default_model_is_current():
+def test_adapter_advises_on_the_side_it_was_given():
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = None, ["m"], "m", 0
+    result = analyzer.analyze(BOOK, 100, side="sell")
+    assert result["order_side"] == "sell"
+    assert "sell" in result["execution_approach"].lower()
+    quote = next(c for c in result["tool_trace"] if c["name"] == "quote_order")
+    assert quote["args"]["side"] == "sell"
+
+
+def test_adapter_reports_a_missing_book_without_raising():
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = None, ["m"], "m", 0
+    assert analyzer.analyze({}, 100)["success"] is False
+
+
+def test_adapter_keeps_the_legacy_wrapper_shape():
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = None, ["m"], "m", 0
+    result = analyzer.get_trading_strategy(BOOK, 100, 0.08, 0.001, 0.01)
+    assert {"strategy", "reasoning", "execution_approach"} <= set(result)
+
+
+def test_default_model_is_current():
     import gemini_integration as gi
     assert gi.MODEL == "gemini-3.8-flash" or os.environ.get("GEMINI_MODEL")
-
-
-def test_gemini_falls_back_when_model_is_retired_and_remembers_it():
-    a = _analyzer({"gemini-3.8-flash"})
-    result = a.analyze(BOOK, 100, 0.08, 0.001, 0.01)
-    assert result["success"] and result["model"] == "gemini-3.5-flash-lite"
-    a.analyze(BOOK, 100, 0.08, 0.001, 0.01)
-    assert a.client.models.calls == ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash-lite"]
-
-
-def test_gemini_reports_failure_when_every_model_is_unavailable():
-    result = _analyzer({"gemini-3.8-flash", "gemini-3.5-flash-lite"}).analyze(BOOK, 100, 0.08, 0.001, 0.01)
-    assert not result["success"] and "NOT_FOUND" in result["analysis"]
 
 
 # --------------------------------------------------------------------------- UI formatting
