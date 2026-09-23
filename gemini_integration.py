@@ -1,19 +1,35 @@
 """
-Gemini market read for the current book and order.
+Adapter between the Dash app and the execution advisor.
 
-Uses the supported `google-genai` SDK (the older `google-generativeai` package is deprecated)
-and asks for JSON output directly.
+The advisor itself lives in `advisor/`: the output schema in `advisor/schema.py`, the
+tools the model runs against the live book in `advisor/tools.py`, and the loop and the
+transports in `advisor/advisor.py`. This module only decides which transport to use and
+flattens the result into the dict the callback renders.
 
-Model: GEMINI_MODEL (default gemini-3.8-flash, the newest stable Flash model). If Google
-retires or restricts it, the analyzer falls through GEMINI_FALLBACK_MODELS (comma-separated,
-default gemini-3.5-flash-lite) instead of failing, and remembers the model that worked.
-The API key is read from GEMINI_API_KEY (or GOOGLE_API_KEY) and never logged.
+Transport choice:
+  GEMINI_API_KEY set  -> GeminiTransport, the real tool-calling loop
+  no key              -> RuleTransport, the deterministic baseline
+
+The no-key path is deliberate. The panel used to print "Set GEMINI_API_KEY" and do
+nothing, which meant the deployed demo was dead for anyone without a key. The baseline
+walks the same book through the same tools and returns the same schema, so the panel is
+always useful and the label says which produced the read.
+
+Model: GEMINI_MODEL (default gemini-3.8-flash), falling through GEMINI_FALLBACK_MODELS
+(comma-separated, default gemini-3.5-flash-lite) when an ID is retired. The API key is
+read from GEMINI_API_KEY or GOOGLE_API_KEY and is never logged.
+
+The live Gemini path has NOT been exercised against the real API from this repository's
+tests or CI; there is no key in that environment. Everything offline runs through
+ReplayTransport. See evals/RESULTS.md.
 """
-import json
 import os
 import time
 
 from dotenv import load_dotenv
+
+from advisor.advisor import GeminiTransport, RuleTransport, run_advisor
+from advisor.schema import strategy_label
 
 load_dotenv()
 
@@ -21,117 +37,120 @@ API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                    if m.strip()]
+MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "5"))  # seconds, free-tier rate limits
 
 if not API_KEY:
-    print("Warning: GEMINI_API_KEY not set; AI analysis is disabled.")
-
-
-def _parse_json(text):
-    text = (text or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.find("{"):]
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError("no JSON object in response")
-    return json.loads(text[start:end + 1])
-
-
-def _is_model_unavailable(error):
-    """True for errors that mean this model ID is retired or not offered to this key."""
-    code = getattr(error, "code", None)
-    text = str(error)
-    return code == 404 or "NOT_FOUND" in text or "no longer available" in text
+    print("GEMINI_API_KEY not set; the advisor will use the deterministic baseline.")
 
 
 class GeminiAnalyzer:
+    """
+    Facade kept at its original name and call shape so the app and the exports do not
+    have to care which transport answered.
+    """
+
     def __init__(self):
         self.client = None
-        self.model = None
-        self.models = []
+        self.models = list(dict.fromkeys([MODEL] + FALLBACK_MODELS))
+        self.model = self.models[0] if self.models else ""
+        self.min_interval = MIN_INTERVAL
         if API_KEY:
             try:
                 from google import genai
                 self.client = genai.Client(api_key=API_KEY)
-                self.models = list(dict.fromkeys([MODEL] + FALLBACK_MODELS))
-                self.model = self.models[0]
             except Exception as e:
-                print(f"Gemini client unavailable: {e}")
-        self.last_call_time = 0
-        self.min_interval = 5  # seconds between calls, to stay inside free-tier rate limits
+                print(f"Gemini client unavailable, falling back to the baseline: {e}")
 
     @property
     def enabled(self):
+        """True when the live model is available. The panel works either way."""
         return self.client is not None
 
-    def _generate(self, prompt):
-        from google.genai import types
-        wait = self.min_interval - (time.time() - self.last_call_time)
-        if wait > 0:
-            raise RuntimeError(f"Rate limited, try again in {wait:.0f}s")
-        self.last_call_time = time.time()
-        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
-        candidates = [self.model] + [m for m in self.models if m != self.model]
-        for i, model in enumerate(candidates):
-            try:
-                response = self.client.models.generate_content(model=model, contents=prompt, config=config)
-            except Exception as e:
-                if _is_model_unavailable(e) and i + 1 < len(candidates):
-                    print(f"Gemini model {model} unavailable ({getattr(e, 'code', '')}); trying {candidates[i + 1]}")
-                    continue
-                raise
-            self.model = model
-            break
-        return _parse_json(response.text)
+    def _transport(self, side, quantity, order_type):
+        if self.client is None:
+            return RuleTransport(side, quantity, order_type)
+        transport = GeminiTransport(self.client, self.models, min_interval=self.min_interval)
+        transport.model = self.model  # start from whichever model last worked
+        return transport
 
-    def analyze(self, orderbook_data, quantity, fees, slippage, impact):
+    def analyze(self, orderbook_data, quantity, fees=0.0, slippage=0.0, impact=0.0,
+                side="buy", order_type="Market", fee_tier="Tier 1", volatility=0.01):
         """
-        One call that returns sentiment, analysis, recommendation, strategy, reasoning and
-        execution_approach, plus success. Never raises.
+        Advise on one order against the current book. Never raises.
+
+        `fees`, `slippage` and `impact` are accepted for backwards compatibility and are
+        not used: the advisor quotes the order itself through `quote_order`, from the
+        same cost models, so that the number it cites is one it actually looked up
+        rather than one handed to it in the prompt.
+
+        Returns a flat dict with `success`, the advice fields, the strategy label, the
+        model or baseline that produced it, and `tool_calls` for display.
         """
-        if not self.enabled:
-            return {"success": False, "analysis": "Set GEMINI_API_KEY to enable AI analysis."}
         if not orderbook_data or not orderbook_data.get("bids") or not orderbook_data.get("asks"):
             return {"success": False, "analysis": "No orderbook data to analyse yet."}
-        try:
-            bids, asks = orderbook_data["bids"][:10], orderbook_data["asks"][:10]
-            top_bid, top_ask = float(bids[0][0]), float(asks[0][0])
-            mid = (top_bid + top_ask) / 2
-            bid_vol = sum(float(b[1]) for b in bids)
-            ask_vol = sum(float(a[1]) for a in asks)
-            imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol) if bid_vol + ask_vol else 0
-            total = fees + slippage + impact
-            bps = lambda usd: usd / quantity * 1e4 if quantity else 0
-            prompt = f"""You are an execution analyst on a crypto trading desk.
-Instrument: {orderbook_data.get('symbol', 'BTC-USDT-SWAP')} on {orderbook_data.get('source', 'unknown venue')}
-Top 10 bids [price, size in base units]: {json.dumps(bids)}
-Top 10 asks [price, size in base units]: {json.dumps(asks)}
-Mid {mid:.2f}, spread {top_ask - top_bid:.4f} ({(top_ask - top_bid) / mid * 1e4:.2f} bps), top-10 imbalance {imbalance:+.3f} (positive = more bid size)
-Proposed order: market BUY ${quantity:,.2f}
-Estimated costs: fees ${fees:.4f} ({bps(fees):.2f} bps), slippage ${slippage:.4f} ({bps(slippage):.2f} bps), impact ${impact:.4f} ({bps(impact):.2f} bps), total ${total:.4f} ({bps(total):.2f} bps)
 
-Using only this data, return a JSON object with string fields:
-sentiment (one of Bullish, Bearish, Neutral), analysis (2 sentences on book shape and liquidity),
-recommendation (1 sentence), strategy (short name, e.g. "Immediate market", "Passive limit at touch", "TWAP 5 slices"),
-reasoning (1-2 sentences), execution_approach (1 sentence). Be concise and quantitative."""
-            result = self._generate(prompt)
-            result = {k: str(v) for k, v in result.items()}
-            result["success"] = True
-            result["model"] = self.model
-            return result
-        except Exception as e:
+        side = "sell" if str(side).lower() == "sell" else "buy"
+        quantity = float(quantity or 0) or 1.0
+        age = _book_age(orderbook_data)
+
+        try:
+            result = run_advisor(
+                self._transport(side, quantity, order_type), orderbook_data, side, quantity,
+                order_type=order_type, fee_tier=fee_tier, volatility=volatility, book_age=age,
+            )
+        except Exception as e:  # the panel must never take the page down
             return {"success": False, "analysis": f"Analysis failed: {e}"}
+
+        if result.model and self.client is not None:
+            self.model = result.model  # remember the model that answered
+
+        if not result.ok:
+            detail = result.errors[0] if result.errors else "the advisor returned nothing usable"
+            return {"success": False, "analysis": f"Analysis failed: {detail}",
+                    "errors": result.errors, "tool_calls": [c["name"] for c in result.tool_calls]}
+
+        advice = dict(result.advice)
+        advice.update({
+            "success": True,
+            "strategy_key": advice["strategy"],
+            "strategy": strategy_label(advice),
+            "model": result.model or ("rules-v1" if self.client is None else self.model),
+            "source": "gemini" if self.client is not None else "baseline",
+            "tool_calls": [c["name"] for c in result.tool_calls],
+            "tool_trace": result.tool_calls,
+            "turns": result.turns,
+            "latency_ms": round(result.latency_ms, 1),
+            "book_age": age,
+            "warnings": result.errors,
+        })
+        return advice
 
     # Backwards-compatible wrappers ------------------------------------------------------
 
     def analyze_orderbook(self, orderbook_data):
-        result = self.analyze(orderbook_data, 100.0, 0.0, 0.0, 0.0)
+        result = self.analyze(orderbook_data, 100.0)
         result.setdefault("sentiment", "Neutral")
         return result
 
-    def get_trading_strategy(self, orderbook_data, quantity, fees, slippage, impact):
-        result = self.analyze(orderbook_data, quantity, fees, slippage, impact)
+    def get_trading_strategy(self, orderbook_data, quantity, fees, slippage, impact,
+                             side="buy", order_type="Market", fee_tier="Tier 1", volatility=0.01):
+        result = self.analyze(orderbook_data, quantity, fees, slippage, impact,
+                              side=side, order_type=order_type, fee_tier=fee_tier, volatility=volatility)
         result.setdefault("strategy", "Unavailable")
         result.setdefault("reasoning", result.get("analysis", ""))
         result.setdefault("execution_approach", "")
         return result
+
+
+def _book_age(book):
+    """How stale the snapshot is, so the advice can say so instead of implying it is live."""
+    ts = book.get("timestamp")
+    if not ts:
+        return "unknown"
+    try:
+        seconds = time.time() - (float(ts) / 1000.0)
+    except (TypeError, ValueError):
+        return "unknown"
+    if seconds < 0 or seconds > 86400:
+        return "unknown"
+    return f"{seconds:.1f}s"

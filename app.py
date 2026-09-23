@@ -631,7 +631,11 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
         return html.Span("No orderbook data available for analysis. Start a stream first.", className="warn")
     quantity = float(quantity or 0) or 1.0
     r = compute(book, quantity, float(volatility or 0.01), fee_tier, side or "buy", "Market")
-    result = gemini_analyzer.analyze(book, quantity, r["fees"], r["slippage"], r["impact"])
+    # The advisor re-quotes the order through its own tools; side and tier are passed so it
+    # advises on the order actually selected rather than assuming a market buy.
+    result = gemini_analyzer.analyze(book, quantity, r["fees"], r["slippage"], r["impact"],
+                                     side=side or "buy", order_type="Market", fee_tier=fee_tier,
+                                     volatility=float(volatility or 0.01))
     if not result.get("success"):
         return html.Span(result.get("analysis", "Analysis unavailable"), className="warn")
     sentiment = result.get("sentiment", "Neutral")
@@ -639,11 +643,16 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
     return html.Div([
         html.Div([html.Span(sentiment, className=f"tag {tone}"),
                   html.Span(result.get("strategy", ""), className="ai-strategy"),
+                  html.Span(f"{result.get('expected_cost_bps', 0):.1f} bps quoted", className="muted mono"),
                   html.Span(f"{result.get('model', '')} · {datetime.now():%H:%M:%S}", className="muted mono")],
                  className="ai-head"),
         html.P(result.get("analysis", "")),
         html.P([html.Strong("Execution "), result.get("execution_approach", "")]),
         html.P([html.Strong("Why "), result.get("reasoning", "")], className="muted"),
+        html.P([html.Strong("Risks "), "; ".join(result.get("risks", []) or ["none flagged"])],
+               className="muted"),
+        html.P(f"Tools used: {', '.join(result.get('tool_calls', [])) or 'none'} · book age {result.get('book_age', '?')}",
+               className="muted mono"),
     ])
 
 

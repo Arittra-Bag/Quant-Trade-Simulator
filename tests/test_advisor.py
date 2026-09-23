@@ -1,0 +1,393 @@
+"""
+Offline tests for the execution advisor: output schema, tools, the agent loop, the
+transports and the eval graders. Run: python -m pytest -q
+
+Nothing here touches the network or needs an API key. The live Gemini path is exercised
+only through a fake client that mimics the SDK's response shape, so what is proven here
+is the loop's handling of that shape, not the real API's behaviour.
+"""
+import json
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from advisor.advisor import (GeminiTransport, ReplayTransport, RuleTransport,  # noqa: E402
+                             run_advisor)
+from advisor.schema import STRATEGIES, strategy_label, validate_advice  # noqa: E402
+from advisor.tools import MAX_TOOL_TURNS, TOOL_DECLARATIONS, BookTools  # noqa: E402
+from evals.candidates import CANDIDATES, REAL_CANDIDATES  # noqa: E402
+from evals.graders import grade, ground_truth  # noqa: E402
+from evals.runner import SCORE_FLOOR, run_one, run_suite, summarise  # noqa: E402
+from evals.scenarios import SCENARIOS, get_scenario, scenario_book  # noqa: E402
+
+DEEP = scenario_book(get_scenario("deep_small_buy"))
+THIN = scenario_book(get_scenario("thin_book_oversized_buy"))
+
+
+def _advice(**overrides):
+    base = {
+        "sentiment": "Neutral", "strategy": "immediate_market", "order_side": "buy",
+        "urgency": "high", "confidence": 0.7, "expected_cost_bps": 4.2, "slices": 1,
+        "horizon_seconds": 0, "limit_price": 0, "analysis": "a", "reasoning": "b",
+        "execution_approach": "c", "risks": [],
+    }
+    base.update(overrides)
+    return base
+
+
+# ------------------------------------------------------------------------------- schema
+
+def test_valid_advice_passes_untouched():
+    advice, errors = validate_advice(_advice(), expected_side="buy")
+    assert not errors and advice["strategy"] == "immediate_market"
+
+
+def test_unknown_strategy_is_rejected_outright():
+    advice, errors = validate_advice(_advice(strategy="yolo"), expected_side="buy")
+    assert advice is None and "not in" in errors[0]
+
+
+def test_free_text_strategy_is_normalised():
+    advice, errors = validate_advice(_advice(strategy="Immediate Market"), expected_side="buy")
+    assert advice["strategy"] == "immediate_market" and not errors
+
+
+@pytest.mark.parametrize("field,value,fixed", [
+    ("confidence", 1.8, 1.0),
+    ("confidence", -0.2, 0.0),
+    ("expected_cost_bps", -5.0, 0.0),
+])
+def test_out_of_range_numbers_are_clamped_and_reported(field, value, fixed):
+    advice, errors = validate_advice(_advice(**{field: value}), expected_side="buy")
+    assert advice[field] == fixed and any(field in e for e in errors)
+
+
+def test_side_mismatch_is_reported_but_not_fatal():
+    advice, errors = validate_advice(_advice(order_side="sell"), expected_side="buy")
+    assert advice is not None and any("does not match" in e for e in errors)
+
+
+def test_single_clip_strategy_cannot_carry_slices():
+    advice, errors = validate_advice(_advice(slices=4), expected_side="buy")
+    assert advice["slices"] == 1 and any("single clip" in e for e in errors)
+
+
+def test_twap_gets_a_horizon_and_a_minimum_slice_count():
+    advice, errors = validate_advice(
+        _advice(strategy="twap", slices=1, horizon_seconds=0), expected_side="buy")
+    assert advice["slices"] >= 2 and advice["horizon_seconds"] > 0 and len(errors) == 2
+
+
+def test_missing_fields_are_reported():
+    _, errors = validate_advice({"strategy": "wait", "sentiment": "Neutral"}, expected_side="buy")
+    assert any("missing fields" in e for e in errors)
+
+
+def test_non_object_response_is_not_repairable():
+    advice, errors = validate_advice("sell everything", expected_side="buy")
+    assert advice is None and errors
+
+
+def test_every_strategy_has_a_label():
+    for strategy in STRATEGIES:
+        assert strategy_label({"strategy": strategy, "slices": 3})
+
+
+# -------------------------------------------------------------------------------- tools
+
+def test_quote_order_flags_an_order_larger_than_the_book():
+    tools = BookTools(THIN)
+    assert tools.quote_order("buy", 400_000)["complete"] is False
+    assert "larger than the visible book" in tools.quote_order("buy", 400_000)["warning"]
+
+
+def test_quote_order_fills_inside_a_deep_book():
+    assert BookTools(DEEP).quote_order("buy", 1_000)["complete"] is True
+
+
+def test_quote_order_reads_the_side_it_is_given():
+    tools = BookTools(DEEP)
+    assert tools.quote_order("sell", 1_000)["fill_vwap"] < tools.quote_order("buy", 1_000)["fill_vwap"]
+
+
+def test_depth_profile_accumulates_and_is_capped():
+    profile = BookTools(DEEP).get_depth_profile("buy", levels=200)["levels"]
+    assert len(profile) <= 50
+    assert all(b["cumulative_usd"] >= a["cumulative_usd"] for a, b in zip(profile, profile[1:]))
+
+
+def test_compare_schedule_does_not_record_its_internal_quote():
+    tools = BookTools(THIN)
+    tools.dispatch("compare_schedule", {"side": "buy", "notional_usd": 400_000, "slices": 4})
+    assert tools.call_names() == ["compare_schedule"]
+
+
+def test_compare_schedule_reports_a_saving_for_an_oversized_order():
+    result = BookTools(THIN).compare_schedule("buy", 400_000, 4)
+    assert result["saving_bps"] > 0 and result["one_shot_complete"] is False
+
+
+def test_dispatch_turns_a_bad_call_into_an_error_not_an_exception():
+    tools = BookTools(DEEP)
+    assert "error" in tools.dispatch("get_fills", {})
+    assert "error" in tools.dispatch("quote_order", {"nope": 1})
+    assert "error" in tools.dispatch("quote_order", {"side": "buy", "notional_usd": -1})
+    assert len(tools.calls) == 3
+
+
+def test_declarations_match_the_methods_that_implement_them():
+    tools = BookTools(DEEP)
+    for declaration in TOOL_DECLARATIONS:
+        assert callable(getattr(tools, declaration["name"]))
+        assert declaration["description"] and declaration["parameters"]["type"] == "OBJECT"
+
+
+# --------------------------------------------------------------------------------- loop
+
+def test_loop_validates_the_final_object():
+    result = run_advisor(ReplayTransport([{"advice": _advice()}]), DEEP, "buy", 1_000)
+    assert result.ok and not result.errors and result.turns == 1
+
+
+def test_loop_runs_the_tools_the_transport_asks_for():
+    transport = ReplayTransport([
+        {"tool_calls": [{"name": "get_book_stats", "args": {}},
+                        {"name": "quote_order", "args": {"side": "buy", "notional_usd": 1_000}}]},
+        {"advice": _advice()},
+    ])
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert [c["name"] for c in result.tool_calls] == ["get_book_stats", "quote_order"]
+    assert result.tool_calls[1]["result"]["net_cost_bps"] > 0
+
+
+def test_loop_stops_at_the_turn_ceiling():
+    spin = {"tool_calls": [{"name": "get_book_stats", "args": {}}]}
+    result = run_advisor(ReplayTransport([spin] * 50), DEEP, "buy", 1_000)
+    assert not result.ok and result.turns == MAX_TOOL_TURNS
+    assert any("ceiling" in e for e in result.errors)
+
+
+def test_loop_survives_a_transport_that_raises():
+    class Boom:
+        name, model = "boom", ""
+
+        def propose(self, *_):
+            raise RuntimeError("upstream is down")
+
+    result = run_advisor(Boom(), DEEP, "buy", 1_000)
+    assert not result.ok and "upstream is down" in result.errors[0]
+
+
+def test_loop_survives_an_exhausted_script():
+    result = run_advisor(ReplayTransport([]), DEEP, "buy", 1_000)
+    assert not result.ok and "exhausted" in result.errors[0]
+
+
+def test_loop_records_the_expected_side_for_the_validator():
+    result = run_advisor(ReplayTransport([{"advice": _advice(order_side="sell")}]),
+                         DEEP, "buy", 1_000)
+    assert any("does not match" in e for e in result.errors)
+
+
+# ----------------------------------------------------------------------- rules transport
+
+def test_baseline_takes_a_small_order_into_a_deep_book():
+    result = run_advisor(RuleTransport("buy", 1_000), DEEP, "buy", 1_000)
+    assert result.ok and result.advice["strategy"] == "immediate_market"
+
+
+def test_baseline_refuses_to_one_shot_an_order_past_the_book():
+    result = run_advisor(RuleTransport("buy", 400_000), THIN, "buy", 400_000)
+    assert result.advice["strategy"] in ("twap", "wait")
+    assert "compare_schedule" in [c["name"] for c in result.tool_calls]
+
+
+def test_baseline_stands_aside_when_the_book_is_hopeless():
+    scenario = get_scenario("absurd_size_buy")
+    book = scenario_book(scenario)
+    result = run_advisor(RuleTransport("buy", scenario["notional"]), book, "buy", scenario["notional"])
+    assert result.advice["strategy"] == "wait"
+
+
+def test_baseline_cites_the_cost_it_quoted():
+    result = run_advisor(RuleTransport("buy", 1_000), DEEP, "buy", 1_000)
+    quoted = next(c for c in result.tool_calls if c["name"] == "quote_order")
+    assert result.advice["expected_cost_bps"] == pytest.approx(quoted["result"]["net_cost_bps"])
+
+
+def test_baseline_reads_sentiment_from_the_book_not_the_order_side():
+    bid_heavy = scenario_book(get_scenario("bid_heavy_buy"))
+    buy = run_advisor(RuleTransport("buy", 25_000), bid_heavy, "buy", 25_000)
+    sell = run_advisor(RuleTransport("sell", 25_000), bid_heavy, "sell", 25_000)
+    assert buy.advice["sentiment"] == sell.advice["sentiment"] == "Bullish"
+
+
+# ---------------------------------------------------------------------- gemini transport
+# A fake client standing in for google-genai. This proves the loop reads the SDK's
+# response shape and the two-phase call; it says nothing about the real API.
+
+class _FakeResponse:
+    def __init__(self, text="", function_calls=None):
+        self.text = text
+        self.function_calls = function_calls or []
+        self.candidates = [type("C", (), {"content": type("Ct", (), {"parts": []})()})()]
+
+
+class _FakeCall:
+    def __init__(self, name, args):
+        self.name, self.args = name, args
+
+
+class _NotFound(Exception):
+    code = 404
+
+    def __str__(self):
+        return "404 NOT_FOUND. model is no longer available"
+
+
+class _FakeModels:
+    def __init__(self, turns, unavailable=()):
+        self.turns, self.unavailable, self.calls = list(turns), set(unavailable), []
+
+    def generate_content(self, model, contents, config):
+        self.calls.append(model)
+        if model in self.unavailable:
+            raise _NotFound()
+        return self.turns.pop(0)
+
+
+def _client(turns, unavailable=()):
+    return type("C", (), {"models": _FakeModels(turns, unavailable)})()
+
+
+def test_gemini_transport_runs_tools_then_finalises_with_the_schema():
+    pytest.importorskip("google.genai")
+    client = _client([
+        _FakeResponse(function_calls=[_FakeCall("quote_order", {"side": "buy", "notional_usd": 1000})]),
+        _FakeResponse(text="Book is deep, take it."),
+        _FakeResponse(text=json.dumps(_advice())),
+    ])
+    result = run_advisor(GeminiTransport(client, ["m1"]), DEEP, "buy", 1_000)
+    assert result.ok and [c["name"] for c in result.tool_calls] == ["quote_order"]
+    assert len(client.models.calls) == 3  # tool turn, closing turn, schema turn
+
+
+def test_gemini_transport_falls_through_a_retired_model_and_remembers_it():
+    pytest.importorskip("google.genai")
+    client = _client([_FakeResponse(text="done"), _FakeResponse(text=json.dumps(_advice()))],
+                     unavailable={"dead"})
+    transport = GeminiTransport(client, ["dead", "alive"])
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert result.ok and transport.model == "alive"
+    assert client.models.calls == ["dead", "alive", "alive"]
+
+
+def test_gemini_transport_reports_failure_when_no_model_is_available():
+    pytest.importorskip("google.genai")
+    client = _client([], unavailable={"dead", "also_dead"})
+    result = run_advisor(GeminiTransport(client, ["dead", "also_dead"]), DEEP, "buy", 1_000)
+    assert not result.ok and "NOT_FOUND" in result.errors[0]
+
+
+def test_gemini_transport_honours_the_rate_limit():
+    pytest.importorskip("google.genai")
+    transport = GeminiTransport(_client([]), ["m"], min_interval=60)
+    transport._last_call = __import__("time").time()
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert not result.ok and "Rate limited" in result.errors[0]
+
+
+# ------------------------------------------------------------------------------ graders
+
+def _graded(scenario_id, candidate):
+    scenario = get_scenario(scenario_id)
+    row = run_one(candidate, scenario)
+    return {c["name"]: c for c in row["checks"]}, row
+
+
+def test_baseline_passes_every_grader_on_every_scenario():
+    for scenario in SCENARIOS:
+        row = run_one("rules", scenario)
+        failed = [c["name"] for c in row["checks"] if not c["passed"]]
+        assert not failed, f"{scenario['id']}: {failed}"
+
+
+@pytest.mark.parametrize("candidate,check,scenario_id", [
+    ("legacy_prose", "side_fidelity", "ask_heavy_sell"),
+    ("legacy_prose", "quoted_the_order", "deep_small_buy"),
+    ("legacy_prose", "schema_clean", "deep_small_buy"),
+    ("ungrounded", "cost_grounded", "deep_small_buy"),
+    ("depth_blind", "depth_honesty", "thin_book_oversized_buy"),
+    ("schema_drift", "schema_clean", "deep_small_buy"),
+    ("schedule_unpriced", "schedule_grounded", "deep_small_buy"),
+    ("derails", "produced_advice", "deep_small_buy"),
+    ("derails", "tools_succeeded", "deep_small_buy"),
+    ("derails", "tool_economy", "deep_small_buy"),
+])
+def test_each_grader_fires_on_the_failure_it_targets(candidate, check, scenario_id):
+    """A grader that never fails is not evidence of anything."""
+    checks, _ = _graded(scenario_id, candidate)
+    assert check in checks and not checks[check]["passed"]
+
+
+def test_legacy_contract_keeps_the_side_on_a_buy_but_loses_it_on_a_sell():
+    """The old prompt hardcoded 'market BUY', so it only drifts when the order is a sell."""
+    assert _graded("deep_small_buy", "legacy_prose")[0]["side_fidelity"]["passed"]
+    assert not _graded("ask_heavy_sell", "legacy_prose")[0]["side_fidelity"]["passed"]
+
+
+def test_ground_truth_is_computed_from_the_book_not_the_model():
+    scenario = get_scenario("thin_book_oversized_buy")
+    truth = ground_truth(scenario, scenario_book(scenario))
+    assert truth["quote"]["complete"] is False and truth["quote"]["net_cost_bps"] > 0
+
+
+def test_grade_marks_critical_failures():
+    scenario = get_scenario("thin_book_oversized_buy")
+    book = scenario_book(scenario)
+    transport = CANDIDATES["depth_blind"](scenario)
+    for turn in transport.script:
+        if isinstance(turn.get("advice"), dict):
+            turn["advice"]["expected_cost_bps"] = ground_truth(scenario, book)["quote"]["net_cost_bps"]
+    result = run_advisor(transport, book, scenario["side"], scenario["notional"],
+                         fee_tier=scenario["fee_tier"], volatility=scenario["volatility"])
+    _, score, critical = grade(scenario, result, book)
+    assert "depth_honesty" in critical and score < 1.0
+
+
+# --------------------------------------------------------------------------------- suite
+
+def test_the_whole_suite_runs_offline_and_the_baseline_clears_its_floor():
+    summary = summarise(run_suite(list(CANDIDATES)))
+    assert set(summary) == set(CANDIDATES)
+    for name in REAL_CANDIDATES:
+        assert summary[name]["score"] >= SCORE_FLOOR
+
+
+def test_replay_candidates_score_below_the_baseline():
+    summary = summarise(run_suite(list(CANDIDATES)))
+    baseline = summary["rules"]["score"]
+    for name in set(CANDIDATES) - REAL_CANDIDATES:
+        assert summary[name]["score"] < baseline, f"{name} did not lose to the baseline"
+
+
+def test_every_scenario_book_has_two_sides():
+    for scenario in SCENARIOS:
+        book = scenario_book(scenario)
+        assert book["bids"] and book["asks"]
+        assert float(book["bids"][0][0]) < float(book["asks"][0][0])
+
+
+def test_published_results_are_current():
+    """RESULTS.md must match what the harness produces now, not a stale run."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "evals", "RESULTS.md")
+    assert os.path.exists(path), "run: python -m evals.runner --markdown evals/RESULTS.md"
+    published = open(path).read()
+    summary = summarise(run_suite(list(CANDIDATES)))
+    for name, entry in summary.items():
+        assert f"| `{name}` |" in published
+        assert f"{entry['score'] * 100:.1f}%" in published, f"{name} score has moved since RESULTS.md"
