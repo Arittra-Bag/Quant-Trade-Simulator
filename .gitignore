@@ -57,3 +57,6 @@ latest_orderbook.json.*
 
 # recorded market data for cost-model validation
 validation/data/
+
+# Local virtualenv
+.venv/

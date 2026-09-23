@@ -11,30 +11,30 @@ VWAP      = filled USD / filled base units
 slippage  = |VWAP - mid| / mid * notional        (USD, always >= 0)
 ```
 
-It includes the half-spread, which is what a market order actually pays. If the order is larger than the visible book, the remainder is priced at the last visible level and the UI flags it as "exceeds visible depth". When no book is available, the original linear regression on `[order size, volatility]` is used as a fallback, floored at zero.
+It includes the half-spread, which is what a market order actually pays. If the order is larger than the visible book, the remainder is priced by continuing the book at the average USD density of the levels it can see, and the result reports how much of the order that covered. When no book is available there is no estimate: the function returns zero rather than guessing.
 
 ### Market Impact Model
-An Almgren-Chriss style model scaled by volatility and visible liquidity:
+Only the permanent part is reported. The temporary part is already paid in the fill price, so
+adding a separate impact term on top of the walk would count it twice:
 
 ```
-x          = Q / D                    (Q = order notional, D = USD resting on both sides of the visible book)
-permanent  = gamma * sigma * x
-temporary  = eta * sigma * sqrt(x / T)  (the empirical square-root law)
-impact     = (permanent + temporary) * Q
+end_bps    = displacement the walk pushes the price to, from the same book
+impact     = PERMANENT_SHARE * end_bps / 1e4 * Q
 ```
 
-Defaults are `gamma = 0.1`, `eta = 0.5`, `T = 1`. They are dimensionless and should be recalibrated per venue and instrument.
+`PERMANENT_SHARE` defaults to 0.4, a literature value, not a fitted one. The square-root law
+is kept as an independent cross-check via `estimate_market_impact(..., model="sqrt")`, never as
+a second charge. `validation/` fits the share against real price moves; see COST_MODEL.md.
 
 ### Maker/Taker Proportion Model
 A market order always removes liquidity, so it is 0% maker. For a passive limit order at the touch the maker probability is `1 / (1 + Q / queue_usd)`, which falls as the order grows relative to the queue ahead of it.
 
 ### Fee Model
-A rule-based fee model is implemented based on OKX's tier-based fee structure:
-- Tier 1: 0.08% (0.0008)
-- Tier 2: 0.07% (0.0007)
-- Tier 3: 0.06% (0.0006)
-
-Fees are calculated by multiplying the order quantity by the appropriate tier rate.
+Each venue has its own maker and taker schedule, read from that venue's published perpetual
+fee page and dated in `fee_model.py`. The rate charged is the two blended by the maker
+probability, so a passive order is no longer billed as if it crossed the spread. The venue
+comes from the book the feed delivered, and the UI shows which venue and tier produced the
+number.
 
 ### Gemini AI Integration
 The application integrates Google's Gemini AI to provide market analysis and trading strategy recommendations:
@@ -69,135 +69,63 @@ To configure:
 2. Add `GEMINI_API_KEY=your_key_here`
 3. The application will automatically load this configuration
 
-## Regression Techniques
+## Fallback Regression
 
-### Linear Regression for Slippage
-The linear regression model for slippage uses ordinary least squares (OLS) to fit a linear equation:
-```
-Slippage = β₀ + β₁*OrderSize + β₂*Volatility
-```
-Where β₀, β₁, and β₂ are coefficients learned from historical data.
+When no order book is available at all, `estimate_slippage` falls back to a `LinearRegression`
+on `[order size, volatility]`, floored at zero.
 
-The model is trained using scikit-learn's LinearRegression implementation, which:
-- Minimizes the residual sum of squares between observed and predicted values
-- Handles multiple features efficiently
-- Provides interpretable coefficients that indicate the impact of each feature on slippage
+**This is a placeholder, not a model.** It is fitted at import time on four hand-picked
+points and was never trained on market data. It exists so the UI degrades to a finite number
+instead of an exception while the feed is down. Every slippage figure you see with a live
+feed comes from walking the book, not from here.
 
-### Logistic Regression for Maker/Taker Proportion
-The logistic regression model uses the logistic function to map any real-valued number to a value between 0 and 1:
-```
-P(Maker) = 1 / (1 + e^(-z))
-where z = β₀ + β₁*OrderSize + β₂*Spread
-```
+There is no logistic regression in the codebase. Maker/taker is the closed-form queue
+expression documented above.
 
-This model:
-- Outputs a probability between 0 and 1
-- Uses order size and current spread as input features
-- Is trained with scikit-learn's LogisticRegression implementation
+## Architecture and Latency
 
-## Market Impact Calculation Methodology
+### Process layout
 
-The Almgren-Chriss model breaks market impact into two components:
+The feed client runs as a separate process from the Dash server. It writes the newest book to
+`latest_orderbook.json` and its connection state to `feed_status.json`, each via a temporary
+file and an atomic rename so the UI never reads a half-written book. The UI polls those files
+on a 500 ms interval. The decoupling means a slow or reconnecting venue cannot block the UI,
+and the feed keeps running across page reloads.
 
-1. **Permanent Impact**: The lasting effect on market price after the trade is completed
-   - Calculated as `gamma * Q` where Q is the order quantity in asset units
-   - This impact remains in the market after the trade and affects all future trades
+One feed runs per server process and is shared by everyone who opens the page, so a public
+deployment behaves as single-user.
 
-2. **Temporary Impact**: The immediate price concession needed to execute the trade
-   - Calculated as `eta * Q / T` where T is the execution time
-   - This impact is transient and dissipates after the trade is completed
+### What is measured
 
-The total market impact is the sum of these components, converted to USD:
-```
-impact_cost = (permanent_impact + temporary_impact) * mid_price
-```
+The app times its own model pass (slippage, fees, impact and maker/taker for the current
+order) on every tick, and the **Latency** panel reports p50 and p99 over a bounded rolling
+buffer. That is the only latency figure the project actually measures, and it covers model
+computation and render preparation, not the network path.
 
-The parameters `gamma` and `eta` are calibrated based on historical market data and represent the market's liquidity characteristics.
+End-to-end latency is dominated by the 500 ms UI interval by construction. The model pass is
+orders of magnitude smaller than that interval, which is why the interval, not the maths, is
+what you would shorten first.
 
-## Performance Optimization Approaches
+### What is not measured
 
-### Memory Management
-1. **Data Structure Efficiency**:
-   - Minimize data copying by using references and in-place operations
-   - Store only necessary orderbook levels (top 50) for analysis
-   - Use optimized numpy arrays for numerical computations
+There is no offline benchmark harness in this repository: no recorded books, no replay, and
+no committed latency or memory numbers. Wire-to-screen latency, exchange-to-client latency
+and memory behaviour under long runs are all unmeasured. Any figure quoted for them would be
+an invention, so none is quoted here.
 
-2. **File-Based Communication**:
-   - The application uses a file-based approach for communication between the WebSocket client and UI
-   - Temporary files are used during writing to avoid partial reads
-   - File operations are optimized with a minimum update interval to prevent excessive I/O
+## Known Gaps
 
-### Network Communication
-1. **Efficient WebSocket Implementation**:
-   - Asynchronous WebSocket client using Python's asyncio library
-   - Connection reestablishment logic with exponential backoff
-   - Minimal data transformation to reduce processing overhead
+Ranked roughly by how much each would change the numbers:
 
-2. **Update Frequency Control**:
-   - Configurable update interval to balance between real-time updates and system load
-   - Validation of incoming data before processing to filter out invalid messages
-
-### Thread Management
-1. **Process Separation**:
-   - WebSocket client runs as a separate process to avoid UI blocking
-   - Decoupled architecture allows WebSocket operation independent of UI refresh rate
-
-2. **Async Processing**:
-   - Asynchronous programming model for WebSocket client
-   - Non-blocking I/O operations
-
-### Regression Model Efficiency
-1. **Model Simplicity**:
-   - Linear and logistic regression models chosen for computational efficiency
-   - Simple models with few parameters that can be evaluated quickly
-   - Pre-trained models with no runtime training requirements
-
-2. **Vectorized Operations**:
-   - Use of numpy for efficient numerical operations
-   - Batch prediction for all metrics in one pass to minimize overhead
-
-## Latency Benchmarking
-
-### Data Processing Latency
-The application measures the time taken to process each orderbook update and calculate all metrics. This includes:
-- Slippage estimation
-- Fee calculation
-- Market impact calculation
-- Maker/Taker proportion prediction
-
-The latency is reported in milliseconds in the UI, typically showing values between 1-5ms depending on system load.
-
-### UI Update Latency
-The interval component in the Dash application is set to 500ms, which provides a balance between:
-- Responsive UI updates
-- System resource utilization
-- Human perception thresholds
-
-### End-to-End Simulation Loop Latency
-The complete latency from data reception to UI update includes:
-1. WebSocket message reception
-2. Data validation and processing
-3. File writing
-4. File reading by the UI
-5. Metric calculation
-6. UI rendering
-
-This full loop typically completes in under 600ms, ensuring that the system can process data faster than it is received from the WebSocket feed.
-
-## Future Improvements
-
-1. **Real-time Model Training**:
-   - Implement online learning for the regression models
-   - Adapt model parameters based on recent market conditions
-
-2. **Advanced Market Impact Models**:
-   - Integrate more sophisticated market impact models
-   - Account for market-specific factors like volatility regime
-
-3. **Enhanced Performance Monitoring**:
-   - Add detailed performance metrics and dashboards
-   - Implement monitoring for system resource utilization
-
-4. **Database Integration**:
-   - Replace file-based communication with a lightweight database
-   - Store historical data for model training and validation 
+1. **No calibration against real fills.** `γ`, `η` and `T` are dimensionless defaults. Until
+   estimates are compared against executed trades, the impact term is a shape, not a
+   quantity.
+2. **Volatility is a slider**, not an estimate from the tape, and it is unitless: it does
+   not carry an annualisation or a horizon.
+3. **Visible depth only.** `books5` is five levels. Orders past the visible book have the
+   remainder priced at the last level and flagged, which understates the true cost.
+4. **One fee schedule for all venues**, taker only, no maker rebates.
+5. **The Gemini panel has no schema validation, no tool use and no evals**, and is not
+   exercised by the test suite or CI.
+6. **Polling, not push.** The UI pulls from disk on a fixed interval rather than being driven
+   by book updates.
