@@ -54,3 +54,6 @@ __pycache__
 feed_status.json
 latest_orderbook.json.*
 .pytest_cache/
+
+# recorded market data for cost-model validation
+validation/data/

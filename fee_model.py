@@ -1,47 +1,77 @@
-def calculate_fees(quantity, fee_tier):
+"""
+Per-venue fee schedule.
+
+The old model applied one OKX-shaped taker table to every venue and had no maker rate
+at all, so a Binance book and a Kraken book were charged identically and a passive
+order was charged as if it crossed the spread. Rates below are the published base-tier
+schedules for the perpetual/swap products this app streams, read from each venue's own
+fee page. They are a snapshot, not a live lookup: FEE_SCHEDULE_CHECKED says when, and
+the UI shows the venue and tier next to the number so nobody mistakes one venue's
+schedule for another's. The base tier of each venue is the rate to trust here; the two
+tiers below it follow each venue's published ladder and are worth re-reading before
+anyone quotes them.
+
+Tier 1/2/3 are the three lowest public tiers of each venue's own ladder (VIP 0/1/2 or
+the equivalent), kept under generic names because the ladders do not line up across
+venues.
+"""
+FEE_SCHEDULE_CHECKED = "2026-09-23"
+
+# venue -> tier -> (maker rate, taker rate), as fractions of notional
+FEE_SCHEDULE = {
+    "OKX": {
+        "Tier 1": (0.00020, 0.00050),
+        "Tier 2": (0.00015, 0.00040),
+        "Tier 3": (0.00010, 0.00035),
+    },
+    "BINANCE": {
+        "Tier 1": (0.00020, 0.00050),
+        "Tier 2": (0.00016, 0.00040),
+        "Tier 3": (0.00014, 0.00035),
+    },
+    "KRAKEN": {
+        "Tier 1": (0.00020, 0.00050),
+        "Tier 2": (0.00016, 0.00045),
+        "Tier 3": (0.00014, 0.00040),
+    },
+    "HYPERLIQUID": {
+        "Tier 1": (0.00015, 0.00045),
+        "Tier 2": (0.00012, 0.00040),
+        "Tier 3": (0.00008, 0.00035),
+    },
+}
+
+DEFAULT_VENUE = "OKX"
+DEFAULT_TIER = "Tier 1"
+TIERS = ("Tier 1", "Tier 2", "Tier 3")
+
+
+def _venue_key(venue):
+    key = (venue or DEFAULT_VENUE).strip().upper()
+    return key if key in FEE_SCHEDULE else DEFAULT_VENUE
+
+
+def fee_rates(venue=DEFAULT_VENUE, fee_tier=DEFAULT_TIER):
+    """Return (maker, taker) rates for a venue and tier, falling back to OKX Tier 1."""
+    table = FEE_SCHEDULE[_venue_key(venue)]
+    return table.get(fee_tier or DEFAULT_TIER, table[DEFAULT_TIER])
+
+
+def calculate_fees(quantity, fee_tier=DEFAULT_TIER, venue=DEFAULT_VENUE, maker_fraction=0.0):
     """
-    Calculate expected fees based on the exchange fee tier and order quantity.
-    
-    This function implements a rule-based fee model based on OKX's tier structure.
-    The fee rates are based on OKX's published fee schedule and represent the taker
-    fees for different VIP levels.
-    
-    Fee Structure:
-    - Tier 1: 0.08% (0.0008) - Standard/VIP 0 fee level
-    - Tier 2: 0.07% (0.0007) - VIP 1 fee level
-    - Tier 3: 0.06% (0.0006) - VIP 2 fee level
-    
-    For market orders, taker fees apply. For limit orders that provide liquidity,
-    maker fees would be lower, but are not implemented here as we're focusing on
-    market orders.
-    
-    Args:
-        quantity (float): Order quantity in USD
-        fee_tier (str): Selected fee tier ("Tier 1", "Tier 2", or "Tier 3")
-    
-    Returns:
-        float: Expected fee amount in USD
-    
-    Example:
-        >>> calculate_fees(1000, "Tier 1")
-        0.8  # 0.08% of 1000 USD
+    Expected exchange fee in USD.
+
+    maker_fraction is the share of the order expected to rest rather than cross; a
+    market order is 0.0 and pays the taker rate outright. Blending the two rates means
+    a passive order is no longer charged as if it lifted the offer.
+
+    >>> round(calculate_fees(1000, "Tier 1", "OKX"), 4)
+    0.5
     """
     try:
-        # Define fee rates for each tier
-        tier_rates = {
-            "Tier 1": 0.0008,  # 0.08%
-            "Tier 2": 0.0007,  # 0.07%
-            "Tier 3": 0.0006   # 0.06%
-        }
-        
-        # Get rate for the selected tier, default to Tier 1 if not found
-        rate = tier_rates.get(fee_tier, 0.0008)
-        
-        # Calculate fee amount
-        fee_amount = float(quantity) * rate
-        
-        return fee_amount
+        maker, taker = fee_rates(venue, fee_tier)
+        m = min(max(float(maker_fraction or 0.0), 0.0), 1.0)
+        return float(quantity) * (m * maker + (1 - m) * taker)
     except Exception as e:
-        # Handle errors gracefully and return 0 as a safe default
         print(f"Error calculating fees: {e}")
-        return 0.0 
+        return 0.0

@@ -16,10 +16,8 @@ import numpy as np
 from dash import Input, Output, State, ctx, dcc, html
 
 from export import export_orderbook_to_csv, export_orderbook_to_excel
-from fee_model import calculate_fees
 from gemini_integration import GeminiAnalyzer
-from models import (book_stats, estimate_market_impact, estimate_slippage,
-                    predict_maker_taker, walk_book)
+from models import book_stats, estimate_costs
 from visualizations import (create_latency_time_series, create_orderbook_depth_chart,
                             create_transaction_cost_breakdown, empty_figure)
 
@@ -332,16 +330,17 @@ def clean_symbol(symbol):
 
 
 def compute(book, quantity, volatility, fee_tier, side, order_type):
+    """Cost breakdown for one order. The volatility argument is only a fallback: once
+    enough of the feed has arrived, estimate_costs uses volatility measured from it."""
     t0 = time.perf_counter()
-    fill = walk_book(book, quantity, side)
-    slippage = estimate_slippage(book, quantity, volatility, side=side)
-    fees = calculate_fees(quantity, fee_tier)
-    impact = estimate_market_impact(book, quantity, volatility)
-    maker = predict_maker_taker(book, quantity, order_type)
-    stats = book_stats(book)
+    c = estimate_costs(book, quantity, volatility, side=side, order_type=order_type,
+                       fee_tier=fee_tier, venue=book.get("source"))
     elapsed_us = (time.perf_counter() - t0) * 1e6
-    return dict(fill=fill, slippage=slippage, fees=fees, impact=impact, maker=maker, stats=stats,
-                net=slippage + fees + impact, elapsed_us=elapsed_us)
+    if not c:
+        return dict(fill=None, slippage=0.0, fees=0.0, impact=0.0, maker=0.0,
+                    stats=book_stats(book), net=0.0, elapsed_us=elapsed_us, cost=None)
+    return dict(fill=c["fill"], slippage=c["slippage_usd"], fees=c["fees_usd"], impact=c["impact_usd"],
+                maker=c["maker"], stats=c["stats"], net=c["net_usd"], elapsed_us=elapsed_us, cost=c)
 
 
 # ----------------------------------------------------------------------------- callbacks
