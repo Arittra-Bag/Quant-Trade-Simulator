@@ -40,8 +40,13 @@ def empty_figure(message="Waiting for book", height=None):
     return fig
 
 
-def create_orderbook_depth_chart(orderbook_data, fill=None, height=None):
-    """Cumulative USD depth per side as step lines, with the mid and the order's fill marked."""
+def create_orderbook_depth_chart(orderbook_data, fill=None, height=None, dp=2):
+    """
+    Cumulative USD depth per side as step lines, with the mid and the order's fill marked.
+
+    `dp` is the price precision the rest of the screen is using, so the axis, the hovers and
+    the VWAP marker read the same number of decimals as the ladder and the header.
+    """
     if not orderbook_data or not orderbook_data.get("bids") or not orderbook_data.get("asks"):
         return empty_figure(height=height)
 
@@ -57,20 +62,20 @@ def create_orderbook_depth_chart(orderbook_data, fill=None, height=None):
     fig.add_trace(go.Scatter(
         x=bids[:, 0], y=bid_cum, name="Bids", mode="lines", line=dict(color=BID, width=1.5, shape="hv"),
         fill="tozeroy", fillcolor="rgba(46,189,133,0.12)",
-        hovertemplate="bid %{x:,.2f}<br>cum $%{y:,.0f}<extra></extra>"))
+        hovertemplate=f"bid %{{x:,.{dp}f}}<br>cum $%{{y:,.0f}}<extra></extra>"))
     fig.add_trace(go.Scatter(
         x=asks[:, 0], y=ask_cum, name="Asks", mode="lines", line=dict(color=ASK, width=1.5, shape="hv"),
         fill="tozeroy", fillcolor="rgba(246,70,93,0.12)",
-        hovertemplate="ask %{x:,.2f}<br>cum $%{y:,.0f}<extra></extra>"))
+        hovertemplate=f"ask %{{x:,.{dp}f}}<br>cum $%{{y:,.0f}}<extra></extra>"))
     fig.add_vline(x=mid, line=dict(color=MUTED, width=1, dash="dot"))
     if fill:
         fig.add_vline(x=fill["vwap"], line=dict(color=ACCENT, width=1.5))
-        fig.add_annotation(x=fill["vwap"], y=1, yref="paper", text=f"VWAP {fill['vwap']:,.2f}", showarrow=False,
+        fig.add_annotation(x=fill["vwap"], y=1, yref="paper", text=f"VWAP {fill['vwap']:,.{dp}f}", showarrow=False,
                            xanchor="left", yanchor="top", xshift=4,
                            font=dict(family=MONO, size=10, color=ACCENT))
     _base_layout(fig, height)
     fig.update_yaxes(tickprefix="$", tickformat="~s")
-    fig.update_xaxes(tickformat=",.1f")
+    fig.update_xaxes(tickformat=f",.{dp}f")
     return fig
 
 
@@ -84,7 +89,7 @@ def create_latency_time_series(latency_history, height=None, unit="µs"):
     fig.add_trace(go.Scatter(y=y, mode="lines", line=dict(color=ACCENT, width=1.2),
                              fill="tozeroy", fillcolor="rgba(255,176,0,0.07)",
                              hovertemplate=f"%{{y:,.0f}} {unit}<extra></extra>"))
-    for val, label, pos in ((p50, "p50", "bottom right"), (p99, "p99", "top right")):
+    for val, label, pos in ((p50, "p50", "bottom left"), (p99, "p99", "top left")):
         fig.add_hline(y=val, line=dict(color=MUTED, width=1, dash="dot"),
                       annotation_text=f"{label} {val:,.0f}", annotation_position=pos,
                       annotation_font=dict(family=MONO, size=9, color=MUTED))
@@ -95,19 +100,28 @@ def create_latency_time_series(latency_history, height=None, unit="µs"):
 
 
 def create_transaction_cost_breakdown(slippage, fees, impact, quantity=None, height=None):
-    """Horizontal stacked bar of cost components, in bps of notional when quantity is given."""
+    """
+    Horizontal stacked bar of cost components, in bps of notional when quantity is given.
+
+    A component worth a fraction of a percent of the total is narrower than its own label, and
+    plotly silently drops text that will not fit, which left the screen showing a "cost stack"
+    with the slippage component missing. The bar carries the proportions and the legend carries
+    every component with its value, in the order they are stacked, so nothing can hide.
+    """
     parts = [("Slippage", slippage, "#7aa2f7"), ("Impact", impact, ACCENT), ("Fees", fees, "#8b93a1")]
     scale = 1e4 / quantity if quantity else 1.0
     unit = "bps" if quantity else "$"
     fig = go.Figure()
     for name, val, color in parts:
         v = max(val, 0) * scale
-        fig.add_trace(go.Bar(y=["cost"], x=[v], name=name, orientation="h", marker=dict(color=color, line_width=0),
-                             text=[f"{name} {v:,.2f}"], textposition="inside", insidetextanchor="start",
-                             textfont=dict(family=MONO, size=10, color="#07080a"),
+        fig.add_trace(go.Bar(y=["cost"], x=[v], name=f"{name} {v:,.2f}", orientation="h",
+                             marker=dict(color=color, line_width=0),
                              hovertemplate=f"{name}: %{{x:,.3f}} {unit}<extra></extra>"))
     _base_layout(fig, height, barmode="stack", bargap=0.35)
-    fig.update_layout(hovermode="closest", margin=dict(l=8, r=12, t=4, b=22))
+    fig.update_layout(hovermode="closest", margin=dict(l=8, r=12, t=4, b=40), showlegend=True,
+                      legend=dict(orientation="h", traceorder="normal", yanchor="top", y=-0.45,
+                                  xanchor="left", x=0, font=dict(family=MONO, size=9, color=MUTED),
+                                  itemclick=False, itemdoubleclick=False, bgcolor="rgba(0,0,0,0)"))
     fig.update_yaxes(visible=False)
     fig.update_xaxes(ticksuffix=f" {unit}" if quantity else "", tickprefix="" if quantity else "$")
     return fig

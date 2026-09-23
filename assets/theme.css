@@ -78,6 +78,10 @@ body { -webkit-font-smoothing: antialiased; }
 /* ---------------- ticket */
 .field { margin-bottom: 10px; min-width: 0; }
 .field-label { display: block; font: 500 10px var(--sans); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+/* σ is a variable, not an initial: uppercasing it turns it into Σ, which means something else. */
+.field-symbol { text-transform: none; font-family: var(--mono); margin-left: 4px; }
+.ticket-error { min-height: 14px; margin-top: 6px; font-size: 10px; color: var(--ask); }
+.input.invalid, .dash-input-container.input.invalid { border-color: var(--ask); }
 .field-hint { font-size: 10px; color: var(--muted); margin-top: 3px; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
@@ -86,6 +90,7 @@ body { -webkit-font-smoothing: antialiased; }
   border: 1px solid var(--line-2); border-radius: var(--r); font: 12px var(--mono); outline: none;
 }
 .input:focus { border-color: var(--accent); }
+.input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 input[type=number]::-webkit-inner-spin-button { opacity: .3; }
 
 .chips { display: flex; gap: 4px; margin-top: 6px; }
@@ -99,7 +104,13 @@ input[type=number]::-webkit-inner-spin-button { opacity: .3; }
 .seg { display: grid !important; grid-template-columns: 1fr 1fr; height: 30px; border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; padding: 0 !important; gap: 0 !important; }
 .seg .dash-options-list-option { display: flex !important; align-items: center; justify-content: center; margin: 0 !important; padding: 0 !important; cursor: pointer;
   font: 600 11px var(--sans); color: var(--muted); letter-spacing: .04em; text-transform: uppercase; background: transparent; }
-.seg .dash-options-list-option-wrapper { display: none !important; }
+/* Hide the radio visually but leave it in the tab order and the accessibility tree.
+   display:none took Buy/Sell off the keyboard entirely. */
+.seg .dash-options-list-option-wrapper {
+  position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.seg .dash-options-list-option:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 .seg .dash-options-list-option:first-child.selected { background: var(--bid); color: #04130c; }
 .seg .dash-options-list-option:last-child.selected { background: var(--ask); color: #1a0306; }
 
@@ -129,7 +140,7 @@ input[type=number]::-webkit-inner-spin-button { opacity: .3; }
 .dash-dropdown-option.selected { color: var(--accent) !important; }
 .dash-input-container.input { display: flex; align-items: center; padding: 0; }
 .dash-input-container.input input { flex: 1; min-width: 0; height: 100%; background: transparent; border: 0; color: var(--text); font: 12px var(--mono); padding: 0 8px; outline: none; }
-.dash-input-container.input:focus-within { border-color: var(--accent); }
+.dash-input-container.input:focus-within { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .dash-input-stepper { display: none !important; }
 
 /* slider */
@@ -147,6 +158,13 @@ input[type=number]::-webkit-inner-spin-button { opacity: .3; }
   font: 600 11px var(--sans); letter-spacing: .04em; text-transform: uppercase; transition: filter .12s, border-color .12s;
 }
 .btn:hover { filter: brightness(1.12); }
+
+/* Focus rings. Chromium's default outline is rgb(16,16,16) on a #07080a background, which
+   made tabbing through the ticket invisible. */
+button:focus-visible, summary:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r);
+}
+.dash-slider-thumb:focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 3px; }
 .btn-go { flex: 1; background: var(--bid); color: #04130c; }
 .btn-stop { background: transparent; color: var(--ask); border-color: rgba(246,70,93,.45); }
 .btn-ghost { background: transparent; color: var(--text-2); border-color: var(--line-2); }
@@ -161,12 +179,29 @@ input[type=number]::-webkit-inner-spin-button { opacity: .3; }
 .raw-panel[open] summary::before { content: "− "; }
 .raw { margin: 0; padding: 0 12px 12px; max-height: 220px; overflow: auto; font-size: 10px; color: var(--muted); }
 
+/* ---------------- data freshness
+   The pill alone was not enough: the desk kept showing a full set of numbers after the feed
+   stopped, and nothing on the figures said they were of a book minutes old. */
+.banner {
+  display: none; align-items: center; gap: 8px; padding: 6px 14px; font: 500 11px var(--sans);
+  border-bottom: 1px solid var(--line);
+}
+.banner.show { display: flex; }
+.banner.stale { color: var(--accent); background: rgba(255, 176, 0, .08); border-bottom-color: rgba(255, 176, 0, .3); }
+.banner.frozen { color: var(--text-2); background: var(--panel-2); }
+.banner::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.kpis.stale, .kpis.frozen, #ladder-wrap.stale, #ladder-wrap.frozen,
+.grid.stale .col-center .graph, .grid.frozen .col-center .graph { opacity: .55; }
+.kpis.stale .kpi.primary .kpi-value, .kpis.frozen .kpi.primary .kpi-value { color: var(--text-2); }
+.ladder-foot { padding: 6px 6px 0; font-size: 10px; color: var(--accent); line-height: 1.35; }
+.ladder-foot:empty { display: none; }
+
 /* ---------------- KPIs */
 .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--line) !important; }
 .kpi { background: var(--panel); padding: 10px 12px 11px; min-width: 0; }
 .kpi-label { font: 500 10px var(--sans); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
 .kpi-value { font-size: 20px; font-weight: 500; margin-top: 4px; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kpi-sub { font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-sub { font-size: 10px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
 .kpi.primary { box-shadow: inset 2px 0 0 var(--accent); }
 .kpi.primary .kpi-value { color: var(--accent); }
 

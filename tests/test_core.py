@@ -240,3 +240,77 @@ def test_adapter_keeps_the_legacy_wrapper_shape():
 def test_default_model_is_current():
     import gemini_integration as gi
     assert gi.MODEL == "gemini-3.8-flash" or os.environ.get("GEMINI_MODEL")
+
+
+# --------------------------------------------------------------------------- UI formatting
+def test_money_precision_follows_magnitude():
+    """A cost tile is one sixth of a column; a fixed 4dp truncated large numbers on screen."""
+    from app import usd
+    assert usd(0) == "$0.00"
+    assert usd(0.0008) == "$0.000800"
+    assert usd(0.5) == "$0.5000"
+    assert usd(800) == "$800.00"
+    assert usd(2652.3588) == "$2,652.36"
+    assert usd(32039.45) == "$32,039"
+    assert usd(250_513_734.57) == "$250.51M"
+    assert usd(2_505_137_345.7) == "$2.51B"
+    assert usd(-2652.36) == "$-2,652.36"
+
+
+@pytest.mark.parametrize("v", [0, 0.004, 1, 999.99, 1e4, 1e6, 1e9, 1e12])
+def test_money_never_outgrows_a_tile(v):
+    from app import usd
+    assert len(usd(v)) <= 12
+
+
+def test_age_string_units():
+    from app import age_str
+    assert age_str(0.192) == "192ms"
+    assert age_str(2.6) == "2.6s"
+    assert age_str(90) == "1m 30s"
+    assert age_str(180) == "3m 00s"
+    assert age_str(3725) == "1h 02m"
+
+
+def test_raw_book_marks_the_cut():
+    from app import RAW_BOOK_CHARS, raw_book_text
+    small = {"bids": [[1, 1]], "asks": [[2, 1]]}
+    assert raw_book_text(small) == json.dumps(small, indent=1)
+    big = {"bids": [[i, 1] for i in range(4000)], "asks": [[1, 1]]}
+    out = raw_book_text(big)
+    assert "truncated" in out and len(out) < RAW_BOOK_CHARS + 80
+
+
+# --------------------------------------------------------------------------- feed freshness
+def test_book_freshness_reports_what_the_screen_can_be_trusted_to_show():
+    import time as _t
+
+    from app import book_freshness
+    fresh = {"local_time": _t.time()}
+    old = {"local_time": _t.time() - 90}
+    assert book_freshness(None, "idle")[0] == "none"
+    assert book_freshness(fresh, "live")[0] == "fresh"
+    assert book_freshness(old, "live")[0] == "stale"
+    state, note = book_freshness(old, "idle")
+    assert state == "frozen" and "1m 30s" in note
+    state, note = book_freshness(old, "down")
+    assert state == "frozen" and "offline" in note.lower()
+
+
+# --------------------------------------------------------------------------- one book per paint
+def test_tiles_and_figures_are_built_from_one_computation():
+    """
+    The figures used to run their own interval and their own compute(), so the cost stack and
+    the impact tile disagreed on screen. They must come from a single callback.
+    """
+    import app as app_module
+    outputs = [o.component_id for cb in app_module.app.callback_map.values()
+               for o in (cb["output"] if isinstance(cb["output"], list) else [cb["output"]])]
+    painter = [cb for cb in app_module.app.callback_map.values()
+               if any(getattr(o, "component_id", None) == "netcost-value"
+                      for o in (cb["output"] if isinstance(cb["output"], list) else [cb["output"]]))]
+    assert len(painter) == 1, "the tiles must be painted by exactly one callback"
+    painter_outputs = {o.component_id for o in painter[0]["output"]}
+    for figure_id in ("depth-chart", "cost-breakdown-chart", "latency-chart"):
+        assert figure_id in painter_outputs, f"{figure_id} must be returned beside the tiles"
+    assert outputs.count("depth-chart") == 1
