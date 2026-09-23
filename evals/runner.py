@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +30,9 @@ from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
 
 # A real candidate scoring below this is a regression worth failing CI over.
 SCORE_FLOOR = 0.90
+
+# Seconds between live scenarios, to stay under free-tier request limits.
+LIVE_PACE_SECONDS = float(os.environ.get("GEMINI_MIN_INTERVAL", "5"))
 
 
 def _fill_quote_placeholder(transport, scenario, book):
@@ -84,8 +88,12 @@ def run_suite(candidate_names, live=False):
             print("No GEMINI_API_KEY; skipping the live candidate.", file=sys.stderr)
 
     for name in candidate_names:
-        for scenario in SCENARIOS:
-            transport = live_transport_factory() if name == "gemini_live" else None
+        for i, scenario in enumerate(SCENARIOS):
+            transport = None
+            if name == "gemini_live":
+                if i:
+                    time.sleep(LIVE_PACE_SECONDS)  # free-tier requests-per-minute
+                transport = live_transport_factory()
             rows.append(run_one(name, scenario, live_transport=transport))
     return rows
 
@@ -101,7 +109,9 @@ def _live_transport_factory():
     models = [os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")]
     models += [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                if m.strip()]
-    return lambda: GeminiTransport(client, models, min_interval=float(os.environ.get("GEMINI_MIN_INTERVAL", "5")))
+    # The runner paces scenarios itself (LIVE_PACE_SECONDS), so the transport's own
+    # refuse-if-too-soon limit stays off and a 429 is retried instead of scored as a failure.
+    return lambda: GeminiTransport(client, models, max_retries=2)
 
 
 def summarise(rows):
@@ -232,6 +242,10 @@ def main(argv=None):
         from evals.scenarios import get_scenario
         SCENARIOS = [get_scenario(args.scenario)]
 
+    if args.live and not args.json_path:
+        # A live run costs money and is hard to repeat; always keep the raw rows.
+        args.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
+
     rows = run_suite(names, live=args.live)
     summary = summarise(rows)
 
@@ -250,6 +264,12 @@ def main(argv=None):
         for name, entry in sorted(summary.items(), key=lambda kv: -kv[1]["score"]):
             print(f"{name:<{width}}  {entry['score'] * 100:5.1f}%  "
                   f"{entry['clean_scenarios']}/{entry['scenarios']}    {entry['mean_latency_ms']:7.1f} ms")
+
+    for row in rows:
+        if row["candidate"] == "gemini_live" and row["errors"]:
+            print(f"gemini_live {row['scenario']}: {row['errors'][0]}", file=sys.stderr)
+    if args.live and args.json_path:
+        print(f"full results in {args.json_path}", file=sys.stderr)
 
     regressed = [n for n in summary
                  if (n in REAL_CANDIDATES or n == "gemini_live") and summary[n]["score"] < SCORE_FLOOR]
