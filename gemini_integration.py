@@ -2,7 +2,11 @@
 Gemini market read for the current book and order.
 
 Uses the supported `google-genai` SDK (the older `google-generativeai` package is deprecated)
-and asks for JSON output directly. The model is configurable with GEMINI_MODEL.
+and asks for JSON output directly.
+
+Model: GEMINI_MODEL (default gemini-3.8-flash, the newest stable Flash model). If Google
+retires or restricts it, the analyzer falls through GEMINI_FALLBACK_MODELS (comma-separated,
+default gemini-3.5-flash-lite) instead of failing, and remembers the model that worked.
 The API key is read from GEMINI_API_KEY (or GOOGLE_API_KEY) and never logged.
 """
 import json
@@ -14,7 +18,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
+                   if m.strip()]
 
 if not API_KEY:
     print("Warning: GEMINI_API_KEY not set; AI analysis is disabled.")
@@ -31,15 +37,24 @@ def _parse_json(text):
     return json.loads(text[start:end + 1])
 
 
+def _is_model_unavailable(error):
+    """True for errors that mean this model ID is retired or not offered to this key."""
+    code = getattr(error, "code", None)
+    text = str(error)
+    return code == 404 or "NOT_FOUND" in text or "no longer available" in text
+
+
 class GeminiAnalyzer:
     def __init__(self):
         self.client = None
         self.model = None
+        self.models = []
         if API_KEY:
             try:
                 from google import genai
                 self.client = genai.Client(api_key=API_KEY)
-                self.model = MODEL
+                self.models = list(dict.fromkeys([MODEL] + FALLBACK_MODELS))
+                self.model = self.models[0]
             except Exception as e:
                 print(f"Gemini client unavailable: {e}")
         self.last_call_time = 0
@@ -55,11 +70,18 @@ class GeminiAnalyzer:
         if wait > 0:
             raise RuntimeError(f"Rate limited, try again in {wait:.0f}s")
         self.last_call_time = time.time()
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
-        )
+        config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+        candidates = [self.model] + [m for m in self.models if m != self.model]
+        for i, model in enumerate(candidates):
+            try:
+                response = self.client.models.generate_content(model=model, contents=prompt, config=config)
+            except Exception as e:
+                if _is_model_unavailable(e) and i + 1 < len(candidates):
+                    print(f"Gemini model {model} unavailable ({getattr(e, 'code', '')}); trying {candidates[i + 1]}")
+                    continue
+                raise
+            self.model = model
+            break
         return _parse_json(response.text)
 
     def analyze(self, orderbook_data, quantity, fees, slippage, impact):
@@ -95,6 +117,7 @@ reasoning (1-2 sentences), execution_approach (1 sentence). Be concise and quant
             result = self._generate(prompt)
             result = {k: str(v) for k, v in result.items()}
             result["success"] = True
+            result["model"] = self.model
             return result
         except Exception as e:
             return {"success": False, "analysis": f"Analysis failed: {e}"}

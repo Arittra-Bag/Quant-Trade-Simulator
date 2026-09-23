@@ -22,7 +22,8 @@ pip install -r requirements.txt
 Optional, for the AI panel: create a `.env` file (never committed) with
 ```
 GEMINI_API_KEY=your_key_here
-# GEMINI_MODEL=gemini-2.5-flash
+# GEMINI_MODEL=gemini-3.8-flash              # default
+# GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite  # tried if the default is retired
 ```
 
 ## Run
