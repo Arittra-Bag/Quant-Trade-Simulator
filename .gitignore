@@ -54,3 +54,6 @@ __pycache__
 feed_status.json
 latest_orderbook.json.*
 .pytest_cache/
+
+# Local virtualenv
+.venv/
