@@ -3,44 +3,30 @@
 ## Model Selection and Parameters
 
 ### Slippage Estimation Model
-The application uses a linear regression model to estimate slippage based on order size and market volatility. Linear regression was chosen for its:
-- Simplicity and interpretability
-- Ability to capture the linear relationship between order size, volatility, and slippage
-- Computational efficiency for real-time processing
+Slippage is measured by walking the live book, the way an execution desk estimates it:
 
-The model is trained on historical data with features:
-- Order size (USD value)
-- Market volatility (measured as the annualized standard deviation of returns)
-
-The output is the expected slippage in USD terms.
-
-### Almgren-Chriss Market Impact Model
-The Almgren-Chriss model is implemented for estimating market impact of large orders. This model was selected because:
-- It provides a well-established mathematical framework for estimating both temporary and permanent price impacts
-- It accounts for order size, execution time, and market characteristics
-- It has strong theoretical foundations in financial economics
-
-The model uses the following parameters:
-- `gamma` (2e-6): Permanent impact parameter that represents how much the market price is expected to change permanently as a result of the trade
-- `eta` (2e-6): Temporary impact parameter that represents the immediate price concession to execute the trade
-- `T`: Time horizon for execution (set to 1 as default, representing immediate execution for market orders)
-
-The formula implemented is:
 ```
-Impact = (permanent_impact + temporary_impact) * mid_price
-Where:
-permanent_impact = gamma * Q
-temporary_impact = eta * Q / T
-Q = quantity in asset units
+fill the order notional level by level on the ask side (buy) or bid side (sell)
+VWAP      = filled USD / filled base units
+slippage  = |VWAP - mid| / mid * notional        (USD, always >= 0)
 ```
+
+It includes the half-spread, which is what a market order actually pays. If the order is larger than the visible book, the remainder is priced at the last visible level and the UI flags it as "exceeds visible depth". When no book is available, the original linear regression on `[order size, volatility]` is used as a fallback, floored at zero.
+
+### Market Impact Model
+An Almgren-Chriss style model scaled by volatility and visible liquidity:
+
+```
+x          = Q / D                    (Q = order notional, D = USD resting on both sides of the visible book)
+permanent  = gamma * sigma * x
+temporary  = eta * sigma * sqrt(x / T)  (the empirical square-root law)
+impact     = (permanent + temporary) * Q
+```
+
+Defaults are `gamma = 0.1`, `eta = 0.5`, `T = 1`. They are dimensionless and should be recalibrated per venue and instrument.
 
 ### Maker/Taker Proportion Model
-A logistic regression model is used to predict the probability of an order being executed as a maker order vs. a taker order. This model:
-- Maps the input variables to a probability between 0 and 1
-- Accounts for order size and current bid-ask spread
-- Provides a probabilistic framework for estimating maker vs. taker execution likelihood
-
-For market orders, this will typically predict near-zero values, indicating taker executions.
+A market order always removes liquidity, so it is 0% maker. For a passive limit order at the touch the maker probability is `1 / (1 + Q / queue_usd)`, which falls as the order grows relative to the queue ahead of it.
 
 ### Fee Model
 A rule-based fee model is implemented based on OKX's tier-based fee structure:
@@ -58,7 +44,8 @@ The application integrates Google's Gemini AI to provide market analysis and tra
 - Execution approach suggestions
 
 The Gemini integration:
-- Uses the gemini-2.0-flash model
+- Uses the `google-genai` SDK with `gemini-2.5-flash` by default (override with `GEMINI_MODEL`)
+- Makes a single JSON-mode call per request
 - Securely stores API credentials in environment variables
 - Formats orderbook data into structured prompts
 - Processes JSON responses for clean UI presentation

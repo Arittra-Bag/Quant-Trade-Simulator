@@ -1,272 +1,114 @@
-import os
-import google.generativeai as genai
+"""
+Gemini market read for the current book and order.
+
+Uses the supported `google-genai` SDK (the older `google-generativeai` package is deprecated)
+and asks for JSON output directly. The model is configurable with GEMINI_MODEL.
+The API key is read from GEMINI_API_KEY (or GOOGLE_API_KEY) and never logged.
+"""
 import json
+import os
 import time
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Get API key from environment variables
-API_KEY = os.environ.get("GEMINI_API_KEY")
-if not API_KEY:
-    print("Warning: GEMINI_API_KEY not found in environment variables. Some features may not work.")
+API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Configure the Gemini API with the key from environment variables
-if API_KEY:
-    genai.configure(api_key=API_KEY)
+if not API_KEY:
+    print("Warning: GEMINI_API_KEY not set; AI analysis is disabled.")
+
+
+def _parse_json(text):
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("{"):]
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("no JSON object in response")
+    return json.loads(text[start:end + 1])
+
 
 class GeminiAnalyzer:
     def __init__(self):
-        """Initialize the Gemini Analyzer with the Generation model."""
+        self.client = None
+        self.model = None
         if API_KEY:
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
-        else:
-            self.model = None
+            try:
+                from google import genai
+                self.client = genai.Client(api_key=API_KEY)
+                self.model = MODEL
+            except Exception as e:
+                print(f"Gemini client unavailable: {e}")
         self.last_call_time = 0
-        self.min_interval = 5  # Minimum seconds between API calls to avoid rate limits
-        
+        self.min_interval = 5  # seconds between calls, to stay inside free-tier rate limits
+
+    @property
+    def enabled(self):
+        return self.client is not None
+
+    def _generate(self, prompt):
+        from google.genai import types
+        wait = self.min_interval - (time.time() - self.last_call_time)
+        if wait > 0:
+            raise RuntimeError(f"Rate limited, try again in {wait:.0f}s")
+        self.last_call_time = time.time()
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+        )
+        return _parse_json(response.text)
+
+    def analyze(self, orderbook_data, quantity, fees, slippage, impact):
+        """
+        One call that returns sentiment, analysis, recommendation, strategy, reasoning and
+        execution_approach, plus success. Never raises.
+        """
+        if not self.enabled:
+            return {"success": False, "analysis": "Set GEMINI_API_KEY to enable AI analysis."}
+        if not orderbook_data or not orderbook_data.get("bids") or not orderbook_data.get("asks"):
+            return {"success": False, "analysis": "No orderbook data to analyse yet."}
+        try:
+            bids, asks = orderbook_data["bids"][:10], orderbook_data["asks"][:10]
+            top_bid, top_ask = float(bids[0][0]), float(asks[0][0])
+            mid = (top_bid + top_ask) / 2
+            bid_vol = sum(float(b[1]) for b in bids)
+            ask_vol = sum(float(a[1]) for a in asks)
+            imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol) if bid_vol + ask_vol else 0
+            total = fees + slippage + impact
+            bps = lambda usd: usd / quantity * 1e4 if quantity else 0
+            prompt = f"""You are an execution analyst on a crypto trading desk.
+Instrument: {orderbook_data.get('symbol', 'BTC-USDT-SWAP')} on {orderbook_data.get('source', 'unknown venue')}
+Top 10 bids [price, size in base units]: {json.dumps(bids)}
+Top 10 asks [price, size in base units]: {json.dumps(asks)}
+Mid {mid:.2f}, spread {top_ask - top_bid:.4f} ({(top_ask - top_bid) / mid * 1e4:.2f} bps), top-10 imbalance {imbalance:+.3f} (positive = more bid size)
+Proposed order: market BUY ${quantity:,.2f}
+Estimated costs: fees ${fees:.4f} ({bps(fees):.2f} bps), slippage ${slippage:.4f} ({bps(slippage):.2f} bps), impact ${impact:.4f} ({bps(impact):.2f} bps), total ${total:.4f} ({bps(total):.2f} bps)
+
+Using only this data, return a JSON object with string fields:
+sentiment (one of Bullish, Bearish, Neutral), analysis (2 sentences on book shape and liquidity),
+recommendation (1 sentence), strategy (short name, e.g. "Immediate market", "Passive limit at touch", "TWAP 5 slices"),
+reasoning (1-2 sentences), execution_approach (1 sentence). Be concise and quantitative."""
+            result = self._generate(prompt)
+            result = {k: str(v) for k, v in result.items()}
+            result["success"] = True
+            return result
+        except Exception as e:
+            return {"success": False, "analysis": f"Analysis failed: {e}"}
+
+    # Backwards-compatible wrappers ------------------------------------------------------
+
     def analyze_orderbook(self, orderbook_data):
-        """
-        Analyze the current orderbook data and return insights.
-        
-        Args:
-            orderbook_data: Dictionary containing orderbook data
-        
-        Returns:
-            Dictionary with analysis results
-        """
-        # Check if API key is available
-        if not API_KEY or not self.model:
-            return {
-                "success": False,
-                "sentiment": "Neutral",
-                "analysis": "Gemini API key not configured. Please set GEMINI_API_KEY environment variable."
-            }
-            
-        # Handle empty or invalid orderbook data
-        if not orderbook_data or not isinstance(orderbook_data, dict):
-            return {
-                "success": False,
-                "sentiment": "Neutral",
-                "analysis": "No valid orderbook data available for analysis."
-            }
-            
-        # Extract orderbook data
-        try:
-            bids = orderbook_data.get("bids", [])
-            asks = orderbook_data.get("asks", [])
-            
-            if not bids or not asks:
-                return {
-                    "success": False,
-                    "sentiment": "Neutral",
-                    "analysis": "Orderbook data is missing bid or ask information."
-                }
-                
-            # Continue with analysis
-        except Exception as e:
-            return {
-                "success": False,
-                "sentiment": "Neutral",
-                "analysis": f"Error analyzing orderbook data: {str(e)}"
-            }
-        
-        try:
-            # Calculate basic metrics for prompt
-            bids = orderbook_data['bids'][:5]  # Top 5 bids
-            asks = orderbook_data['asks'][:5]  # Top 5 asks
-            
-            # Calculate bid-ask spread
-            top_bid = float(bids[0][0]) if bids else 0
-            top_ask = float(asks[0][0]) if asks else 0
-            spread = top_ask - top_bid if top_bid and top_ask else 0
-            
-            # Calculate total volume
-            bid_volume = sum(float(bid[1]) for bid in bids)
-            ask_volume = sum(float(ask[1]) for ask in asks)
-            
-            # Calculate imbalance
-            imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else 0
-            
-            # Create prompt for Gemini
-            prompt = f"""
-            Analyze this cryptocurrency orderbook snapshot and provide insights:
-            
-            Asset: {orderbook_data.get('symbol', 'BTC-USDT-SWAP')}
-            Time: {orderbook_data.get('timestamp', 'Unknown')}
-            
-            Top 5 Bids (Buy Orders):
-            {json.dumps(bids, indent=2)}
-            
-            Top 5 Asks (Sell Orders):
-            {json.dumps(asks, indent=2)}
-            
-            Key Metrics:
-            - Bid-Ask Spread: {spread:.2f}
-            - Bid Volume: {bid_volume:.2f}
-            - Ask Volume: {ask_volume:.2f}
-            - Order Imbalance: {imbalance:.2f} (positive means more buying pressure)
-            
-            Please provide:
-            1. Market sentiment (Bullish, Bearish, or Neutral)
-            2. Brief analysis (2-3 sentences)
-            3. A trading recommendation
-            
-            Format your response as a JSON object with fields: sentiment, analysis, recommendation.
-            Be concise and focus only on the data provided.
-            """
-            
-            # Call Gemini API
-            response = self.model.generate_content(prompt)
-            self.last_call_time = time.time()
-            
-            # Process response
-            result_text = response.text
-            
-            # Try to extract JSON
-            try:
-                # First try to find and parse JSON if it's within a code block
-                if "```json" in result_text and "```" in result_text.split("```json")[1]:
-                    json_str = result_text.split("```json")[1].split("```")[0].strip()
-                    result = json.loads(json_str)
-                elif "{" in result_text and "}" in result_text:
-                    # If not in code block, try to extract the JSON object
-                    json_str = result_text[result_text.find("{"):result_text.rfind("}")+1]
-                    result = json.loads(json_str)
-                else:
-                    # If JSON extraction fails, create structured response from text
-                    result = {
-                        "sentiment": "Neutral",
-                        "analysis": result_text[:200] + "..." if len(result_text) > 200 else result_text,
-                        "recommendation": "See analysis above."
-                    }
-            except json.JSONDecodeError:
-                # If JSON parsing fails, create a structured response
-                result = {
-                    "sentiment": "Neutral",
-                    "analysis": result_text[:200] + "..." if len(result_text) > 200 else result_text,
-                    "recommendation": "See analysis above."
-                }
-            
-            result["success"] = True
-            return result
-            
-        except Exception as e:
-            # Handle any exceptions
-            return {
-                "sentiment": "Error",
-                "analysis": f"Error during analysis: {str(e)}",
-                "recommendation": "Try again later.",
-                "success": False
-            }
-    
+        result = self.analyze(orderbook_data, 100.0, 0.0, 0.0, 0.0)
+        result.setdefault("sentiment", "Neutral")
+        return result
+
     def get_trading_strategy(self, orderbook_data, quantity, fees, slippage, impact):
-        """
-        Generate a specific trading strategy recommendation based on market data and costs.
-        
-        Args:
-            orderbook_data (dict): L2 orderbook data with bids and asks
-            quantity (float): Order quantity in USD
-            fees (float): Expected fees
-            slippage (float): Expected slippage
-            impact (float): Expected market impact
-            
-        Returns:
-            dict: Strategy recommendation
-        """
-        try:
-            # Check if API key is available
-            if not API_KEY or not self.model:
-                return {
-                    "strategy": "API Not Configured",
-                    "reasoning": "Gemini API key not configured. Please set GEMINI_API_KEY environment variable.",
-                    "execution_approach": "Configure API key first",
-                    "success": False
-                }
-                
-            # Extract relevant data
-            if not orderbook_data:
-                return {
-                    "strategy": "Insufficient data for strategy recommendation.",
-                    "reasoning": "No orderbook data available.",
-                    "success": False
-                }
-            
-            # Calculate basic metrics for prompt
-            symbol = orderbook_data.get('symbol', 'BTC-USDT-SWAP')
-            top_bid = float(orderbook_data['bids'][0][0]) if orderbook_data.get('bids') else 0
-            top_ask = float(orderbook_data['asks'][0][0]) if orderbook_data.get('asks') else 0
-            mid_price = (top_bid + top_ask) / 2 if top_bid and top_ask else 0
-            
-            # Total transaction cost
-            total_cost = fees + slippage + impact
-            cost_percentage = (total_cost / quantity) * 100 if quantity > 0 else 0
-            
-            # Create prompt for Gemini
-            prompt = f"""
-            Generate an optimal trading strategy based on this data:
-            
-            Asset: {symbol}
-            Order Size: ${quantity:.2f}
-            Current Mid Price: ${mid_price:.2f}
-            
-            Transaction Costs:
-            - Fees: ${fees:.4f} ({(fees/quantity)*100:.4f}% of order)
-            - Expected Slippage: ${slippage:.4f} ({(slippage/quantity)*100:.4f}% of order)
-            - Market Impact: ${impact:.4f} ({(impact/quantity)*100:.4f}% of order)
-            - Total Cost: ${total_cost:.4f} ({cost_percentage:.4f}% of order)
-            
-            Based only on this data, recommend a specific trading strategy.
-            
-            Format your response as JSON with these fields:
-            - strategy: Brief strategy name/type
-            - reasoning: 1-2 sentences explaining your recommendation
-            - execution_approach: Brief execution approach
-            
-            Be extremely concise.
-            """
-            
-            # Call Gemini API
-            response = self.model.generate_content(prompt)
-            self.last_call_time = time.time()
-            
-            # Process response
-            result_text = response.text
-            
-            # Try to extract JSON
-            try:
-                # First try to find and parse JSON if it's within a code block
-                if "```json" in result_text and "```" in result_text.split("```json")[1]:
-                    json_str = result_text.split("```json")[1].split("```")[0].strip()
-                    result = json.loads(json_str)
-                elif "{" in result_text and "}" in result_text:
-                    # If not in code block, try to extract the JSON object
-                    json_str = result_text[result_text.find("{"):result_text.rfind("}")+1]
-                    result = json.loads(json_str)
-                else:
-                    # If JSON extraction fails, create structured response from text
-                    result = {
-                        "strategy": "Direct Market Execution",
-                        "reasoning": result_text[:200] + "..." if len(result_text) > 200 else result_text,
-                        "execution_approach": "Standard market order"
-                    }
-            except json.JSONDecodeError:
-                # If JSON parsing fails, create a structured response
-                result = {
-                    "strategy": "Direct Market Execution",
-                    "reasoning": result_text[:200] + "..." if len(result_text) > 200 else result_text,
-                    "execution_approach": "Standard market order"
-                }
-            
-            result["success"] = True
-            return result
-            
-        except Exception as e:
-            # Handle any exceptions
-            return {
-                "strategy": "Error generating strategy",
-                "reasoning": f"Error: {str(e)}",
-                "execution_approach": "Try again later",
-                "success": False
-            } 
+        result = self.analyze(orderbook_data, quantity, fees, slippage, impact)
+        result.setdefault("strategy", "Unavailable")
+        result.setdefault("reasoning", result.get("analysis", ""))
+        result.setdefault("execution_approach", "")
+        return result

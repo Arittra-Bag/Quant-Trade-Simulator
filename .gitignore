@@ -50,3 +50,7 @@ build/
 /__pycache__/
 build
 __pycache__
+# Runtime files written by the feed client
+feed_status.json
+latest_orderbook.json.*
+.pytest_cache/
