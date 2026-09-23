@@ -11,30 +11,30 @@ VWAP      = filled USD / filled base units
 slippage  = |VWAP - mid| / mid * notional        (USD, always >= 0)
 ```
 
-It includes the half-spread, which is what a market order actually pays. If the order is larger than the visible book, the remainder is priced at the last visible level and the UI flags it as "exceeds visible depth". When no book is available, the original linear regression on `[order size, volatility]` is used as a fallback, floored at zero.
+It includes the half-spread, which is what a market order actually pays. If the order is larger than the visible book, the remainder is priced by continuing the book at the average USD density of the levels it can see, and the result reports how much of the order that covered. When no book is available there is no estimate: the function returns zero rather than guessing.
 
 ### Market Impact Model
-An Almgren-Chriss style model scaled by volatility and visible liquidity:
+Only the permanent part is reported. The temporary part is already paid in the fill price, so
+adding a separate impact term on top of the walk would count it twice:
 
 ```
-x          = Q / D                    (Q = order notional, D = USD resting on both sides of the visible book)
-permanent  = gamma * sigma * x
-temporary  = eta * sigma * sqrt(x / T)  (the empirical square-root law)
-impact     = (permanent + temporary) * Q
+end_bps    = displacement the walk pushes the price to, from the same book
+impact     = PERMANENT_SHARE * end_bps / 1e4 * Q
 ```
 
-Defaults are `gamma = 0.1`, `eta = 0.5`, `T = 1`. They are dimensionless and should be recalibrated per venue and instrument.
+`PERMANENT_SHARE` defaults to 0.4, a literature value, not a fitted one. The square-root law
+is kept as an independent cross-check via `estimate_market_impact(..., model="sqrt")`, never as
+a second charge. `validation/` fits the share against real price moves; see COST_MODEL.md.
 
 ### Maker/Taker Proportion Model
 A market order always removes liquidity, so it is 0% maker. For a passive limit order at the touch the maker probability is `1 / (1 + Q / queue_usd)`, which falls as the order grows relative to the queue ahead of it.
 
 ### Fee Model
-A rule-based fee model is implemented based on OKX's tier-based fee structure:
-- Tier 1: 0.08% (0.0008)
-- Tier 2: 0.07% (0.0007)
-- Tier 3: 0.06% (0.0006)
-
-Fees are calculated by multiplying the order quantity by the appropriate tier rate.
+Each venue has its own maker and taker schedule, read from that venue's published perpetual
+fee page and dated in `fee_model.py`. The rate charged is the two blended by the maker
+probability, so a passive order is no longer billed as if it crossed the spread. The venue
+comes from the book the feed delivered, and the UI shows which venue and tier produced the
+number.
 
 ### Gemini AI Integration
 The application integrates Google's Gemini AI to provide market analysis and trading strategy recommendations:

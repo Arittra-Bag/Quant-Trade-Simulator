@@ -4,7 +4,6 @@ plotly==7.1.0
 websockets==16.1.1
 numpy==2.4.6
 pandas==3.0.6
-scikit-learn==1.9.1
 google-genai==2.25.0
 xlsxwriter==3.2.9
 python-dotenv==1.2.3

@@ -22,10 +22,10 @@ exchange WebSockets are unreachable. Live venues drive exactly the same path.</s
 
 | Output | How it is computed |
 | --- | --- |
-| **Slippage** | Walks the resting book level by level until the notional is filled, then `abs(VWAP - mid) / mid * notional`. Includes the half-spread, which is what a market order actually pays. |
-| **Market impact** | Almgren-Chriss style: `permanent = γσx`, `temporary = ησ√(x/T)`, where `x = notional / visible depth`. The square-root term is the empirical impact law. |
-| **Fees** | Tiered taker rate on notional, from OKX's VIP 0 to 2 schedule. |
-| **Net cost** | Slippage + impact + fees, shown in USD and bps. |
+| **Slippage** | Walks the resting book level by level until the notional is filled, then `abs(VWAP - mid) / mid * notional`. Includes the half-spread, which is what a market order actually pays. Anything past the last visible level is priced by continuing the book at its own average depth density, and the result says how much of the order that was. |
+| **Market impact** | The permanent residue of that same walk: `PERMANENT_SHARE * end displacement * notional`. The temporary part is already in the fill price, so it is not charged twice. The square-root law is available as a cross-check, not as a second term. |
+| **Fees** | Per-venue maker and taker schedules, blended by the maker probability. |
+| **Net cost** | Spread + depth + fees + permanent impact, shown in USD and bps. Timing risk is reported beside it as a one-sigma band, not added in. |
 | **Maker/taker** | A market order is 0% maker. A passive limit at the touch is `1 / (1 + Q / queue_usd)`, falling as the order grows against the queue ahead of it. |
 | **Calculation latency** | Wall-clock per tick for the model pass and render prep, reported as p50 and p99. |
 
@@ -39,18 +39,17 @@ connecting, stale or offline.
 
 This is a cost *estimator*, not a validated execution model. Being specific about that:
 
-- **The cost model has not been calibrated against real fills.** `γ = 0.1`, `η = 0.5`, `T = 1`
-  are dimensionless defaults, not fitted parameters. Treat the impact number as a shape that
-  responds correctly to size and volatility, not as a number you would size a trade on.
-- **Volatility is an input, not an estimate.** It comes from a slider; nothing infers σ from
-  the tape.
-- **Depth is the visible top of book**, five levels on OKX `books5`. An order larger than the
-  visible book has its remainder priced at the last visible level and is flagged *exceeds
-  visible depth*. Real slippage on such an order would be worse than what is shown.
-- **One fee table for every venue.** The OKX taker schedule is applied across the board, and
-  maker rebates are not modelled.
-- **The fallback slippage regression is a placeholder.** It is fitted on four hand-picked
-  points and is only reachable when there is no book at all to walk.
+- **The cost model has not been calibrated against real fills.** `PERMANENT_SHARE = 0.4` is a
+  literature value, not a fitted one. `validation/` exists to fit it against the public tape,
+  and the one recording taken so far could not: about 400k rests at BTC's touch, so no sample
+  walked the book. Treat the impact number as a shape that responds correctly to size, not as
+  a number you would size a trade on.
+- **Liquidity past the visible book is an assumption.** Depth is the top of book, 25 levels on
+  the venues used here. Beyond it the walk continues the book at the average density of the
+  levels it can see, which is stated in the result rather than hidden; a real book that thins
+  out faster would cost more.
+- **Fee schedules are a dated snapshot**, read off each venue's own page rather than fetched
+  live, so they drift as venues change their ladders.
 - **The Gemini panel is not covered by the tests or CI.** There is no recorded fixture and no
   eval for it; it is optional, off by default, and needs a key you supply.
 - **500 ms polling UI, one shared feed per server process.** This is pre-trade analysis, not
@@ -103,14 +102,16 @@ import check that the app loads with no feed and no API key.
 | --- | --- |
 | `app.py` | Dash app: layout, callbacks, feed supervision |
 | `websocket_client.py` | Multi-venue L2 client, normalisation and venue fallback |
-| `models.py` | Walk-the-book slippage, market impact, maker/taker, book statistics |
-| `fee_model.py` | Tiered fee model |
+| `models.py` | Walk-the-book slippage, permanent impact, measured volatility, maker/taker, book statistics |
+| `fee_model.py` | Per-venue maker and taker fee schedules |
 | `visualizations.py` | Depth, cost-stack and latency charts |
 | `gemini_integration.py` | Optional Gemini read on the book |
 | `export.py` | CSV and Excel export of the current book |
+| `validation/` | Records books and the public trade tape, and scores predicted cost against it |
 | `assets/theme.css` | Desk theme, served automatically by Dash |
 
-`DOCUMENTATION.md` has the model derivations and the environment configuration in full.
+`DOCUMENTATION.md` has the model derivations and the environment configuration in full, and
+`COST_MODEL.md` sets out which parts of a quote are measured and which are still assumptions.
 
 ## Notes
 

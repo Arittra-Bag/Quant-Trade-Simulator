@@ -113,6 +113,9 @@ class BookTools:
     def __init__(self, book, fee_tier="Tier 1", volatility=0.01):
         self.book = book
         self.fee_tier = fee_tier
+        # Fees are per venue, so the advisor quotes the schedule of the venue actually
+        # streaming rather than OKX's for everyone.
+        self.venue = (book or {}).get("source") or "OKX"
         self.volatility = float(volatility)
         self.calls = []
 
@@ -145,7 +148,7 @@ class BookTools:
 
         fill = walk_book(self.book, notional, side)
         slippage = estimate_slippage(self.book, notional, self.volatility, side=side)
-        fees = calculate_fees(notional, self.fee_tier)
+        fees = calculate_fees(notional, self.fee_tier, venue=self.venue)
         impact = estimate_market_impact(self.book, notional, self.volatility)
         maker = predict_maker_taker(self.book, notional, order_type)
         net = slippage + fees + impact
@@ -225,7 +228,7 @@ class BookTools:
         child = notional / slices
         child_slip = estimate_slippage(self.book, child, self.volatility, side=side)
         child_impact = estimate_market_impact(self.book, child, self.volatility)
-        child_fees = calculate_fees(child, self.fee_tier)
+        child_fees = calculate_fees(child, self.fee_tier, venue=self.venue)
         sliced_net = (child_slip + child_impact + child_fees) * slices
 
         return {
