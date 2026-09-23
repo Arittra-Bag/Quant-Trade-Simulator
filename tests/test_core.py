@@ -196,3 +196,47 @@ def test_client_falls_back_when_venue_accepts_but_sends_nothing(tmp_path, monkey
 
     out = asyncio.run(run())
     assert json.loads(out.read_text())["source"] == "HYPERLIQUID"
+
+
+# ----------------------------------------------------------------------------- gemini model fallback
+
+class _NotFound(Exception):
+    code = 404
+
+
+class _FakeModels:
+    def __init__(self, unavailable):
+        self.unavailable, self.calls = unavailable, []
+
+    def generate_content(self, model, contents, config):
+        self.calls.append(model)
+        if model in self.unavailable:
+            raise _NotFound(f"404 NOT_FOUND. models/{model} is no longer available to new users")
+        return type("R", (), {"text": '{"sentiment": "Neutral", "analysis": "ok", "strategy": "Immediate market"}'})()
+
+
+def _analyzer(unavailable):
+    import gemini_integration as gi
+    a = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    a.client = type("C", (), {"models": _FakeModels(unavailable)})()
+    a.models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    a.model, a.last_call_time, a.min_interval = a.models[0], 0, 0
+    return a
+
+
+def test_gemini_default_model_is_current():
+    import gemini_integration as gi
+    assert gi.MODEL == "gemini-3.8-flash" or os.environ.get("GEMINI_MODEL")
+
+
+def test_gemini_falls_back_when_model_is_retired_and_remembers_it():
+    a = _analyzer({"gemini-3.8-flash"})
+    result = a.analyze(BOOK, 100, 0.08, 0.001, 0.01)
+    assert result["success"] and result["model"] == "gemini-3.5-flash-lite"
+    a.analyze(BOOK, 100, 0.08, 0.001, 0.01)
+    assert a.client.models.calls == ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash-lite"]
+
+
+def test_gemini_reports_failure_when_every_model_is_unavailable():
+    result = _analyzer({"gemini-3.8-flash", "gemini-3.5-flash-lite"}).analyze(BOOK, 100, 0.08, 0.001, 0.01)
+    assert not result["success"] and "NOT_FOUND" in result["analysis"]

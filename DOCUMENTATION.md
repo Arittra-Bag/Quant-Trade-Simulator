@@ -44,7 +44,8 @@ The application integrates Google's Gemini AI to provide market analysis and tra
 - Execution approach suggestions
 
 The Gemini integration:
-- Uses the `google-genai` SDK with `gemini-2.5-flash` by default (override with `GEMINI_MODEL`)
+- Uses the `google-genai` SDK with `gemini-3.8-flash` by default (override with `GEMINI_MODEL`)
+- Falls back to `gemini-3.5-flash-lite` (override with `GEMINI_FALLBACK_MODELS`) if Google retires or restricts the default, so a model shutdown no longer breaks the panel
 - Makes a single JSON-mode call per request
 - Securely stores API credentials in environment variables
 - Formats orderbook data into structured prompts

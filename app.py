@@ -540,7 +540,8 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
     return html.Div([
         html.Div([html.Span(sentiment, className=f"tag {tone}"),
                   html.Span(result.get("strategy", ""), className="ai-strategy"),
-                  html.Span(datetime.now().strftime("%H:%M:%S"), className="muted mono")], className="ai-head"),
+                  html.Span(f"{result.get('model', '')} · {datetime.now():%H:%M:%S}", className="muted mono")],
+                 className="ai-head"),
         html.P(result.get("analysis", "")),
         html.P([html.Strong("Execution "), result.get("execution_approach", "")]),
         html.P([html.Strong("Why "), result.get("reasoning", "")], className="muted"),
