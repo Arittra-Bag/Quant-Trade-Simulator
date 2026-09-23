@@ -137,9 +137,33 @@ def feed_state():
     return "warn", label, detail
 
 
+def book_freshness(book, feed):
+    """
+    How far the numbers on screen can be trusted: ("fresh"|"stale"|"frozen"|"none", note).
+
+    Derived from when we received the book rather than the exchange timestamp, because that
+    is what "how old is what I am looking at" means, and exchange clocks drift.
+    """
+    if not book:
+        return "none", ""
+    age = max(0.0, time.time() - float(book.get("local_time") or 0))
+    if feed == "live" and age < STALE_AFTER:
+        return "fresh", ""
+    if feed == "idle":
+        return "frozen", f"Stream stopped. Showing the last book, {age_str(age)} old."
+    if feed == "down":
+        return "frozen", f"Feed offline. Showing the last book, {age_str(age)} old."
+    return "stale", f"No new book for {age_str(age)}. Figures are from the last one received."
+
+
 # ----------------------------------------------------------------------------- layout helpers
-def field(label, control, hint=None):
-    return html.Div([html.Label(label, className="field-label"), control,
+def field(label, control, hint=None, symbol=None):
+    """
+    A labelled control. `symbol` is rendered beside the label without the uppercasing the
+    label carries, so a lowercase sigma stays a sigma instead of becoming a summation sign.
+    """
+    caption = [label] if symbol is None else [label, html.Span(symbol, className="field-symbol")]
+    return html.Div([html.Label(caption, className="field-label"), control,
                      html.Div(hint, className="field-hint") if hint else None], className="field")
 
 
@@ -188,6 +212,8 @@ app.layout = html.Div([
         ], className="hdr-right"),
     ], className="topbar"),
 
+    html.Div(id="data-banner", className="banner", role="status", **{"aria-live": "polite"}),
+
     html.Main([
         # ---------------- left: order ticket
         html.Div([
@@ -213,11 +239,12 @@ app.layout = html.Div([
                               for lbl, val in [("100", 100), ("1K", 1000), ("10K", 10000), ("100K", 100000), ("1M", 1000000)]],
                              className="chips"),
                 ])),
-                field("Volatility (σ)", html.Div([
+                field("Volatility", html.Div([
                     dcc.Slider(id="volatility-slider", min=0.001, max=0.05, step=0.001, value=0.01,
                                marks=None, tooltip=None, updatemode="drag", className="slider"),
                     html.Span("0.010", id="volatility-readout", className="readout mono"),
-                ], className="slider-row"), "Scales the market impact estimate"),
+                ], className="slider-row"),
+                      "Dimensionless. Assumption, not a measurement from the feed.", symbol="(σ)"),
                 field("Fee tier", dcc.Dropdown(id="fee-tier-dropdown",
                                                options=[{"label": t, "value": t} for t in ("Tier 1", "Tier 2", "Tier 3")],
                                                value="Tier 1", clearable=False, searchable=False, className="dd")),
@@ -225,10 +252,12 @@ app.layout = html.Div([
                     html.Button("Start stream", id="start-button", className="btn btn-go"),
                     html.Button("Stop", id="stop-button", className="btn btn-stop"),
                 ], className="btn-row"),
+                html.Div(id="ticket-error", className="ticket-error", role="alert"),
             ], className="ticket"),
 
             panel("Feed", [
-                html.Div(id="status-display", className="feed-detail"),
+                html.Div(id="status-display", className="feed-detail", role="status",
+                         **{"aria-live": "polite"}),
                 html.Div(id="update-time", className="feed-meta mono"),
             ]),
 
@@ -237,6 +266,8 @@ app.layout = html.Div([
                     html.Button("CSV", id="export-csv-button", className="btn btn-ghost"),
                     html.Button("XLSX", id="export-excel-button", className="btn btn-ghost"),
                 ], className="btn-row"),
+                html.Div(id="export-note", className="field-hint", role="status",
+                         **{"aria-live": "polite"}),
                 dcc.Download(id="download-data"),
             ]),
 
@@ -255,7 +286,7 @@ app.layout = html.Div([
                 kpi("fees", "Fees"),
                 kpi("makertaker", "Maker / Taker"),
                 kpi("latency", "Calc latency"),
-            ], className="kpis"),
+            ], id="kpis", className="kpis"),
 
             panel("Depth", dcc.Graph(id="depth-chart", figure=empty_figure(), config=GRAPH_CONFIG,
                                      className="graph graph-depth", style={"height": "100%", "minHeight": "320px"}),
@@ -281,23 +312,43 @@ app.layout = html.Div([
         # ---------------- right: ladder
         html.Div([
             panel("Book", [
-                html.Div([html.Span("Price"), html.Span("Size"), html.Span("Cum $")], className="ladder-head"),
-                html.Div(id="asks-table", className="ladder asks"),
-                html.Div(id="spread-row", className="spread-row mono"),
-                html.Div(id="bids-table", className="ladder bids"),
+                html.Div([
+                    html.Div([html.Span("Price"), html.Span("Size"), html.Span("Cum $")], className="ladder-head"),
+                    html.Div(id="asks-table", className="ladder asks"),
+                    html.Div(id="spread-row", className="spread-row mono"),
+                    html.Div(id="bids-table", className="ladder bids"),
+                    html.Div(id="ladder-depth-note", className="ladder-foot mono"),
+                ], id="ladder-wrap"),
             ], extra=html.Span("", id="ladder-note", className="panel-note"), className="ladder-panel"),
         ], className="col col-right"),
-    ], className="grid"),
+    ], id="grid", className="grid"),
 
     dcc.Interval(id="interval-component", interval=500, n_intervals=0),
-    dcc.Interval(id="chart-interval-component", interval=1000, n_intervals=0),
     dcc.Interval(id="clock-interval", interval=1000, n_intervals=0),
 ], className="app")
 
 
 # ----------------------------------------------------------------------------- formatting
-def usd(v, dp=2):
-    return f"${v:,.{dp}f}" if abs(v) >= 0.01 or v == 0 else f"${v:,.4f}"
+def usd(v):
+    """
+    Money at a precision that follows the magnitude.
+
+    A cost tile is one sixth of the centre column, so a fixed 4dp made a $250m impact
+    truncate and a $800 fee read "$800.0000". Millions and above are abbreviated the way
+    a desk shows them; the bps sub-label underneath carries the exact relative figure.
+    """
+    a = abs(v)
+    if a >= 1e9:
+        return f"${v / 1e9:,.2f}B"
+    if a >= 1e6:
+        return f"${v / 1e6:,.2f}M"
+    if a >= 1e4:
+        return f"${v:,.0f}"
+    if a >= 1:
+        return f"${v:,.2f}"
+    if a >= 0.01:
+        return f"${v:,.4f}"
+    return "$0.00" if v == 0 else f"${v:,.6f}"
 
 
 def bps(v, quantity):
@@ -306,6 +357,23 @@ def bps(v, quantity):
 
 def price_decimals(px):
     return 1 if px >= 1000 else 2 if px >= 10 else 4
+
+
+def age_str(seconds):
+    """
+    Compact age used by the header stat and the stale-data banner.
+
+    Minutes carry their seconds: rounding to whole minutes showed a 90-second-old book as
+    "2m", which overstates how stale the screen is.
+    """
+    if seconds < 1:
+        return f"{seconds * 1000:,.0f}ms"
+    if seconds < 60:
+        return f"{seconds:,.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    return f"{minutes // 60}h {minutes % 60:02d}m"
 
 
 def size_fmt(sz):
@@ -324,6 +392,17 @@ def build_ladder(levels, side, fill_levels, max_cum):
             html.Span(f"{cum:,.0f}", className="cum"),
         ], className="lvl hit" if i < fill_levels else "lvl"))
     return rows[::-1] if side == "asks" else rows
+
+
+RAW_BOOK_CHARS = 6000
+
+
+def raw_book_text(book):
+    """Pretty-printed book, with the cut marked rather than stopping mid-token."""
+    text = json.dumps(book, indent=1)
+    if len(text) <= RAW_BOOK_CHARS:
+        return text
+    return f"{text[:RAW_BOOK_CHARS]}\n… truncated, {len(text) - RAW_BOOK_CHARS:,} more characters"
 
 
 def clean_symbol(symbol):
@@ -367,8 +446,8 @@ def tick_clock(_):
 
 
 @app.callback(
-    Output("status-display", "children"),
-    Output("chart-interval-component", "disabled"),
+    Output("ticket-error", "children"),
+    Output("asset-input", "className"),
     Input("start-button", "n_clicks"),
     Input("stop-button", "n_clicks"),
     State("asset-input", "value"),
@@ -376,28 +455,34 @@ def tick_clock(_):
     prevent_initial_call=True,
 )
 def handle_stream_control(start_clicks, stop_clicks, asset, exchange):
+    """
+    Start and stop the feed. A rejected instrument is reported on the field itself; the feed
+    panel is left to describe the feed, which it now does from live state rather than from
+    whatever was last requested.
+    """
     global client_process, stream_meta, orderbook_data, data_last_modified, update_count
     with _lock:
         if ctx.triggered_id == "start-button":
             symbol = clean_symbol(asset)
             if not symbol:
-                return html.Span("Instrument must look like BTC-USDT-SWAP", className="neg"), False
+                return "Instrument must look like BTC-USDT-SWAP.", "input mono invalid"
             stop_websocket_client(client_process)
             orderbook_data, data_last_modified, update_count = None, 0.0, 0
             calc_latency_us.clear()
             client_process = start_websocket_client(symbol, exchange or "OKX")
             stream_meta = {"symbol": symbol, "exchange": exchange, "started": time.time()}
-            return f"Requested {exchange} feed for {symbol}", False
+            return "", "input mono"
         if ctx.triggered_id == "stop-button":
             stop_websocket_client(client_process)
             client_process = None
-            return "Stream stopped. Last book kept for review.", True
+            return "", "input mono"
     return dash.no_update, dash.no_update
 
 
 @app.callback(
     Output("feed-pill", "className"),
     Output("feed-label", "children"),
+    Output("status-display", "children"),
     Output("update-time", "children"),
     Output("hdr-symbol", "children"),
     Output("hdr-venue", "children"),
@@ -417,7 +502,16 @@ def handle_stream_control(start_clicks, stop_clicks, asset, exchange):
     Output("bids-table", "children"),
     Output("spread-row", "children"),
     Output("ladder-note", "children"),
+    Output("ladder-depth-note", "children"),
     Output("debug-info", "children"),
+    Output("data-banner", "children"),
+    Output("data-banner", "className"),
+    Output("kpis", "className"),
+    Output("ladder-wrap", "className"),
+    Output("grid", "className"),
+    Output("depth-chart", "figure"),
+    Output("latency-chart", "figure"),
+    Output("cost-breakdown-chart", "figure"),
     Input("interval-component", "n_intervals"),
     Input("quantity-input", "value"),
     Input("volatility-slider", "value"),
@@ -426,6 +520,14 @@ def handle_stream_control(start_clicks, stop_clicks, asset, exchange):
     Input("order-type-dropdown", "value"),
 )
 def update_tables(_, quantity, volatility, fee_tier, side, order_type):
+    """
+    Paint the whole desk from one book and one set of numbers.
+
+    The figures used to have their own interval and their own call to compute(), so the cost
+    stack and the tiles reported different market impact and the depth chart's VWAP disagreed
+    with the ladder's. Returning them from the same callback means one response carries one
+    self-consistent view.
+    """
     global orderbook_data, data_last_modified, update_count
     state, label, detail = feed_state()
     pill = f"pill {state}"
@@ -436,13 +538,20 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
         update_count += 1
 
     book = orderbook_data
-    feed_meta = f"{detail}\nUpdate #{update_count} · {datetime.now().strftime('%H:%M:%S')}"
+    freshness, banner = book_freshness(book, state)
+    banner_class = "banner" if freshness in ("fresh", "none") else f"banner show {freshness}"
+    kpis_class = "kpis" if freshness in ("fresh", "none") else f"kpis {freshness}"
+    ladder_class = "" if freshness in ("fresh", "none") else freshness
+    grid_class = "grid" if freshness in ("fresh", "none") else f"grid {freshness}"
+    feed_meta = f"Update #{update_count} · {datetime.now().strftime('%H:%M:%S')}"
     if not book:
         blank = "—"
-        return (pill, label, feed_meta, stream_meta.get("symbol", "—"), stream_meta.get("exchange") or "—",
+        return (pill, label, detail, feed_meta, stream_meta.get("symbol", "—"), stream_meta.get("exchange") or "—",
                 blank, blank, blank, blank, "stat-value", blank,
                 blank, "", blank, "", blank, "", blank, "", blank, "", blank, "",
-                [], [], html.Span("No book yet", className="muted"), "", "No data")
+                [], [], html.Span("No book yet", className="muted"), "", "", "No data",
+                banner, banner_class, kpis_class, ladder_class, grid_class,
+                empty_figure(), empty_figure("No samples"), empty_figure())
 
     quantity = float(quantity or 0) or 1.0
     volatility = float(volatility or 0.01)
@@ -451,9 +560,11 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     s, fill = r["stats"], r["fill"]
     dp = price_decimals(s["mid"])
 
-    now_ms = time.time() * 1000
-    age_ms = max(0.0, now_ms - float(book.get("timestamp") or now_ms))
+    # Age of what is on screen, measured from when we received the book. The exchange
+    # timestamp is kept in the raw panel; exchange clocks drift and would make this lie.
+    age_s = max(0.0, time.time() - float(book.get("local_time") or time.time()))
     lat = np.asarray(calc_latency_us)
+
 
     levels_hit = fill["levels"] if fill else 0
     ladder_note = ""
@@ -461,6 +572,13 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
         ladder_note = f"fill {levels_hit} lvl · VWAP {fill['vwap']:,.{dp}f}"
         if not fill["complete"]:
             ladder_note += " · exceeds visible depth"
+    # The ladder only draws LADDER_LEVELS rows. Say so when the order eats past them, rather
+    # than letting the highlight run off the bottom with nothing to explain it.
+    depth_note = ""
+    if fill and not fill["complete"]:
+        depth_note = "Order exceeds the visible book. The remainder is priced at the last level."
+    elif levels_hit > LADDER_LEVELS:
+        depth_note = f"Fill reaches level {levels_hit}; {LADDER_LEVELS} shown."
     asks_levels = [(float(p), float(q)) for p, q in book["asks"]]
     bids_levels = [(float(p), float(q)) for p, q in book["bids"]]
     max_cum = max(sum(p * q for p, q in asks_levels[:LADDER_LEVELS]),
@@ -475,43 +593,24 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     maker_pct = r["maker"] * 100
 
     return (
-        pill, label, feed_meta,
+        pill, label, detail, feed_meta,
         book.get("symbol") or stream_meta.get("symbol", "—"),
         book.get("source") or stream_meta.get("exchange") or "—",
         f"{s['mid']:,.{dp}f}",
-        f"{s['spread_bps']:.2f}bp",
+        f"{s['spread_bps']:.2f} bps",
         f"{s['microprice']:,.{dp}f}",
         f"{s['imbalance']:+.2f}", imb_class,
-        f"{age_ms:,.0f}ms",
-        usd(r["net"], 4), bps(r["net"], quantity),
-        usd(r["slippage"], 4), f"{bps(r['slippage'], quantity)} · {levels_hit} lvl",
-        usd(r["impact"], 4), bps(r["impact"], quantity),
-        usd(r["fees"], 4), f"{bps(r['fees'], quantity)} · {fee_tier}",
+        age_str(age_s),
+        usd(r["net"]), bps(r["net"], quantity),
+        usd(r["slippage"]), f"{bps(r['slippage'], quantity)} · {levels_hit} lvl",
+        usd(r["impact"]), bps(r["impact"], quantity),
+        usd(r["fees"]), f"{bps(r['fees'], quantity)} · {fee_tier}",
         f"{maker_pct:.0f} / {100 - maker_pct:.0f}", "market orders always take" if order_type == "Market" else "est. passive fill",
         f"{r['elapsed_us']:,.0f}µs", f"p50 {np.percentile(lat, 50):,.0f} · p99 {np.percentile(lat, 99):,.0f}µs",
-        asks, bids, spread_row, ladder_note,
-        json.dumps(book, indent=1)[:6000],
-    )
-
-
-@app.callback(
-    Output("depth-chart", "figure"),
-    Output("latency-chart", "figure"),
-    Output("cost-breakdown-chart", "figure"),
-    Input("chart-interval-component", "n_intervals"),
-    Input("quantity-input", "value"),
-    Input("volatility-slider", "value"),
-    Input("fee-tier-dropdown", "value"),
-    Input("side-radio", "value"),
-)
-def update_chart_displays(_, quantity, volatility, fee_tier, side):
-    book = orderbook_data
-    if not book:
-        return empty_figure(), empty_figure("No samples"), empty_figure()
-    quantity = float(quantity or 0) or 1.0
-    r = compute(book, quantity, float(volatility or 0.01), fee_tier, side or "buy", "Market")
-    return (
-        create_orderbook_depth_chart(book, fill=r["fill"]),
+        asks, bids, spread_row, ladder_note, depth_note,
+        raw_book_text(book),
+        banner, banner_class, kpis_class, ladder_class, grid_class,
+        create_orderbook_depth_chart(book, fill=fill, dp=dp),
         create_latency_time_series(list(calc_latency_us)),
         create_transaction_cost_breakdown(r["slippage"], r["fees"], r["impact"], quantity=quantity),
     )
@@ -550,24 +649,28 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
 
 @app.callback(
     Output("download-data", "data"),
+    Output("export-note", "children"),
     Input("export-csv-button", "n_clicks"),
     Input("export-excel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def export_data(csv_clicks, excel_clicks):
+    """Export the current book, and say so when there is nothing to export."""
     book = orderbook_data
     if not book:
-        return dash.no_update
+        return dash.no_update, html.Span("Nothing to export yet. Start a stream first.", className="warn")
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if ctx.triggered_id == "export-csv-button":
         content = export_orderbook_to_csv(book)
         if content:
-            return dcc.send_string(base64.b64decode(content).decode("utf-8"), filename=f"orderbook_{stamp}.csv")
+            return (dcc.send_string(base64.b64decode(content).decode("utf-8"), filename=f"orderbook_{stamp}.csv"),
+                    f"Saved orderbook_{stamp}.csv")
     elif ctx.triggered_id == "export-excel-button":
         content = export_orderbook_to_excel(book)
         if content:
-            return dcc.send_bytes(base64.b64decode(content), filename=f"orderbook_{stamp}.xlsx")
-    return dash.no_update
+            return (dcc.send_bytes(base64.b64decode(content), filename=f"orderbook_{stamp}.xlsx"),
+                    f"Saved orderbook_{stamp}.xlsx")
+    return dash.no_update, html.Span("Export failed. See the server log.", className="neg")
 
 
 def _shutdown(*_):
