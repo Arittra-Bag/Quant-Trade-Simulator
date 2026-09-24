@@ -131,7 +131,7 @@ def _live_transport_factory():
     from google.genai import types
     client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=int(LIVE_CALL_TIMEOUT * 1000)))
     from gemini_integration import FALLBACK_MODELS, MODEL  # evaluate the models the app uses
-    models = list(dict.fromkeys([MODEL] + FALLBACK_MODELS))
+    models = list(dict.fromkeys([MODEL, *FALLBACK_MODELS]))
     return lambda: GeminiTransport(client, models, call_interval=LIVE_CALL_INTERVAL)
 
 

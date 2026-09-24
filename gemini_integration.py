@@ -125,8 +125,13 @@ class GeminiAnalyzer:
             if self.client is not None and not result.ok:
                 # Gemini did not produce usable advice: the provider failed, or its answer
                 # failed to parse or validate. Either way the rules can still answer.
-                # Without an exception, the run ended on what Gemini sent back.
-                failure = result.exception or AdviceInvalid(result.errors[0] if result.errors else "no advice")
+                why = result.errors[0] if result.errors else "no advice"
+                if result.exception is not None:
+                    failure = result.exception
+                elif result.raw is not None:
+                    failure = AdviceInvalid(why)  # Gemini's advice failed validation
+                else:
+                    failure = RuntimeError(why)  # Gemini never got as far as proposing advice
         except Exception as e:  # the panel must never take the page down
             if not is_upstream(e):
                 print(f"Advisor failed: {e!r}", file=sys.stderr, flush=True)

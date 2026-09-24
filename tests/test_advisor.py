@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import time
+from typing import ClassVar
 
 import pytest
 
@@ -592,7 +593,7 @@ def test_app_adapter_gives_each_request_its_own_conversation():
 class _DailyQuota(Exception):
     """What the free tier returns once a model's requests-per-day quota is spent."""
     code = 429
-    details = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+    details: ClassVar[dict] = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
                                       "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}
 
     def __str__(self):  # the SDK's message carries the response body, as on the desk
@@ -601,7 +602,7 @@ class _DailyQuota(Exception):
 
 class _MinuteQuota(Exception):
     code = 429
-    details = {"error": {"details": [
+    details: ClassVar[dict] = {"error": {"details": [
         {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "37s"}]}}
 
     def __str__(self):
@@ -620,7 +621,7 @@ def test_a_model_out_of_daily_quota_is_not_asked_again_until_the_reset():
     """3.8 Flash at 28/20 a day was still tried first on every call of every click."""
     pytest.importorskip("google.genai")
     cooldown = ModelCooldown()
-    client = _client([_DailyQuota()] + _three_call_run() + _three_call_run())
+    client = _client([_DailyQuota(), *_three_call_run(), *_three_call_run()])
     first = run_advisor(GeminiTransport(client, ["flash", "lite"], cooldown=cooldown), DEEP, "buy", 1_000)
     assert first.ok and client.models.calls == ["flash", "lite", "lite", "lite"]
     second = run_advisor(GeminiTransport(client, ["flash", "lite"], cooldown=cooldown), DEEP, "buy", 1_000)
@@ -728,7 +729,7 @@ def test_each_call_is_cut_to_what_is_left_of_the_deadline():
 
 def test_a_zero_retry_delay_is_honoured():
     class _NoWait(_MinuteQuota):
-        details = {"error": {"details": [{"retryDelay": "0s"}]}}
+        details: ClassVar[dict] = {"error": {"details": [{"retryDelay": "0s"}]}}
     assert ModelCooldown().cooldown_for(_NoWait()) == 0
 
 
@@ -775,7 +776,7 @@ def test_a_timeout_the_deadline_forced_does_not_rest_the_model():
 
 def test_only_a_retired_default_moves_the_default():
     pytest.importorskip("google.genai")
-    client = _client([_Busy()] + _three_call_run(), unavailable={"b"})
+    client = _client([_Busy(), *_three_call_run()], unavailable={"b"})
     transport = GeminiTransport(client, ["a", "b", "c"])
     assert run_advisor(transport, DEEP, "buy", 1_000).ok
     assert transport.model == "a"  # b's 404 says nothing about a, which was only busy
@@ -793,6 +794,16 @@ def test_a_rejected_request_is_not_called_a_validation_failure():
     pytest.importorskip("google.genai")
     client = _client([_BadRequest()])
     result = _live_analyzer(client, models=("m",)).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline"
+    assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
+
+
+def test_a_run_without_advice_is_not_called_a_validation_failure(monkeypatch):
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]), models=("m",))
+    junk = type("T", (), {"name": "gemini", "model": "m", "propose": lambda self, *a: "not a turn"})()
+    monkeypatch.setattr(analyzer, "_transport", lambda *a: junk)
+    result = analyzer.analyze(DEEP, 1_000, side="buy")
     assert result["success"] and result["source"] == "baseline"
     assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
 

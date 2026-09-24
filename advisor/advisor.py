@@ -440,7 +440,7 @@ class GeminiTransport(Transport):
                 call_config, cut_short = self._within_deadline(config)
             except TimeoutError:
                 if last is not None:
-                    raise last  # the model's own failure is the real cause, not the budget
+                    raise last from None  # the model's own failure is the real cause, not the budget
                 raise
             try:
                 response = self.client.models.generate_content(model=model, contents=contents, config=call_config)
