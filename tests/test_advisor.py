@@ -410,12 +410,12 @@ def test_a_call_that_times_out_is_errored_not_scored():
 def test_a_live_run_stops_starting_scenarios_when_its_budget_is_spent(monkeypatch):
     import evals.runner as runner
     monkeypatch.setattr(runner, "LIVE_RUN_BUDGET", -1)
-    monkeypatch.setattr(runner, "_live_transport_factory", lambda: lambda: ReplayTransport([]))
+    monkeypatch.setattr(runner, "_live_transport_factory", lambda name: lambda: ReplayTransport([]))
     saved = []
-    rows = runner.run_suite([], live=True, on_row=lambda r: saved.append(len(r)))
+    rows = runner.run_suite([], live=["gemini_flash"], on_row=lambda r: saved.append(len(r)))
     assert len(rows) == len(SCENARIOS) and all(r["errored"] for r in rows)
     assert saved == list(range(1, len(SCENARIOS) + 1))  # results written after every scenario
-    assert summarise(rows)["gemini_live"]["score"] is None
+    assert summarise(rows)["gemini_flash"]["score"] is None
 
 
 def test_saved_results_replace_the_file_whole(tmp_path, monkeypatch):
@@ -853,3 +853,43 @@ def test_the_daily_cap_answers_from_the_rules_without_calling_the_api():
     capped = analyzer.analyze(DEEP, 1_000, side="buy")
     assert capped["success"] and capped["source"] == "baseline"
     assert "allowance" in capped["notice"] and len(client.models.calls) == 3
+
+
+class _PricedReplay(ReplayTransport):
+    """A replayed model that reports a cost, standing in for a paid live transport."""
+    cost_usd = 0.30
+    usage = {"input_tokens": 1000, "output_tokens": 100}
+
+
+def test_a_live_run_stops_at_its_spend_cap(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "_live_transport_factory",
+                        lambda name: lambda: _PricedReplay([{"error": "stand-in"}]))
+    rows = runner.run_suite([], live=["claude_haiku"], max_usd=0.50)
+    ran = [r for r in rows if not any("spend cap" in e for e in r["errors"])]
+    assert len(ran) == 2  # $0.30 + $0.30 crosses $0.50; nothing after that starts
+    assert all("spend cap" in r["errors"][0] for r in rows[2:])
+    assert ran[0]["cost_usd"] == 0.30 and ran[0]["tokens_in"] == 1000
+
+
+def test_a_live_key_that_is_not_set_skips_that_model(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert runner._live_transport_factory("claude_haiku") is None
+    assert runner.run_suite([], live=["claude_haiku"]) == []
+
+
+def test_the_report_shows_live_cost_and_is_not_gated(monkeypatch):
+    import evals.runner as runner
+    rows = [
+        {"candidate": "claude_haiku", "scenario": s["id"], "score": 0.5, "critical_failures": ["x"],
+         "checks": [], "latency_ms": 2500.0, "errored": False, "errors": [], "tokens_in": 9000,
+         "tokens_out": 700, "cost_usd": 0.0125}
+        for s in SCENARIOS
+    ]
+    summary = summarise(rows)
+    assert summary["claude_haiku"]["mean_cost_usd"] == 0.0125
+    assert summary["claude_haiku"]["mean_tokens"] == 9700
+    md = runner.to_markdown(rows, summary)
+    assert "| `claude_haiku` | live model | 50.0% |" in md and "$0.0125" in md and "2.5 s" in md
+    assert "No row here was produced against a live model" not in md

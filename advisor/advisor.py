@@ -410,6 +410,7 @@ class GeminiTransport(Transport):
         self.min_interval = min_interval
         self.call_interval = call_interval
         self.answered_by = []
+        self.usage = {}
         self._last_request = 0.0
         self._last_attempt = 0.0
         self._contents = None
@@ -424,6 +425,7 @@ class GeminiTransport(Transport):
         self._contents = None
         self._pending = 0
         self.answered_by = []
+        self.usage = {}
 
     def _pace(self):
         wait = self.call_interval - (time.time() - self._last_attempt)
@@ -460,11 +462,24 @@ class GeminiTransport(Transport):
                 if (_model_unavailable(e) or is_transient(e)) and i + 1 < len(candidates):
                     continue  # next model
                 raise
+            self._count(response)
             if default_retired:
                 self.model = model  # the default is retired and not coming back; a busy or resting one is
             self.answered_by.append(model)
             return response
         raise last
+
+    def _count(self, response):
+        """Add a response's token counts to the request's totals, in the Claude transport's keys."""
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return
+        read = lambda key: getattr(meta, key, 0) or 0  # noqa: E731
+        cached = read("cached_content_token_count")
+        for key, value in (("input_tokens", read("prompt_token_count") - cached),
+                           ("cache_read_input_tokens", cached),
+                           ("output_tokens", read("candidates_token_count") + read("thoughts_token_count"))):
+            self.usage[key] = self.usage.get(key, 0) + value
 
     def _within_deadline(self, config):
         """
