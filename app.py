@@ -9,7 +9,13 @@ import sys
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone
+
+try:
+    import fcntl
+except ImportError:  # Windows: the thread lock alone guards the feed
+    fcntl = None
 
 import dash
 import numpy as np
@@ -24,17 +30,22 @@ from visualizations import (create_latency_time_series, create_orderbook_depth_c
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ORDERBOOK_FILE = os.path.join(BASE_DIR, "latest_orderbook.json")
 STATUS_FILE = os.path.join(BASE_DIR, "feed_status.json")
+FEED_FILE = os.path.join(BASE_DIR, "feed.json")
+FEED_LOCK_FILE = os.path.join(BASE_DIR, "feed.lock")
 LADDER_LEVELS = 12
 STALE_AFTER = 5.0  # seconds without a new book before the feed is shown as stale
+NOTE_SECONDS = 4.0  # how long a click's message stays under Start and Stop
 
 VENUES = [("OKX", "OKX"), ("Hyperliquid", "HYPERLIQUID"), ("Binance", "BINANCE"),
           ("Kraken", "KRAKEN"), ("Simulated", "SIM")]
+VENUE_NAMES = {value: label for label, value in VENUES}
 
 # ----------------------------------------------------------------------------- state
-# One feed per server process; this is a single-user simulator.
+# One feed at a time; this is a single-user simulator. Whether it is running lives in
+# FEED_FILE, not here, so every server process and every restart sees the same answer.
 _lock = threading.Lock()
-client_process = None
-stream_meta = {}
+client_process = None  # the feed this process started, if any
+feed_started = None  # which feed the cached book below belongs to
 orderbook_data = None
 data_last_modified = 0.0
 update_count = 0
@@ -66,15 +77,118 @@ app.index_string = """<!DOCTYPE html>
 
 
 # ----------------------------------------------------------------------------- feed process
-def start_websocket_client(symbol, exchange="OKX"):
-    for path in (ORDERBOOK_FILE, STATUS_FILE):
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
+# The running feed is recorded in FEED_FILE (pid, venue, symbol, start time). It used to be
+# a variable in this process, so a status poll answered by another worker, or by the process
+# after a restart, read Idle however many times Start was clicked. Any process can now read
+# the feed and stop it.
+def remove_file(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def write_json(path, data):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+@contextmanager
+def feed_lock():
+    """Serialise Start and Stop across threads and, where the OS allows it, processes."""
+    with _lock:
+        if fcntl is None:
+            yield
+            return
+        with open(FEED_LOCK_FILE, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def pid_alive(pid):
+    if not pid:
+        return False
+    if client_process is not None and client_process.pid == pid:
+        return client_process.poll() is None
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                             capture_output=True, text=True).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def read_feed():
+    """The feed recorded on disk, running or not, or None when nothing was started."""
+    feed = read_json(FEED_FILE)
+    return feed if isinstance(feed, dict) and feed.get("pid") else None
+
+
+def running_feed():
+    feed = read_feed()
+    return feed if feed and pid_alive(feed["pid"]) else None
+
+
+def start_feed(symbol, exchange):
+    """Launch the client and record it. Raises if the process cannot be started."""
+    global client_process
+    remove_file(ORDERBOOK_FILE)
+    remove_file(STATUS_FILE)
     cmd = [sys.executable, os.path.join(BASE_DIR, "websocket_client.py"),
            "--symbol", symbol, "--exchange", exchange, "--output", ORDERBOOK_FILE]
-    return subprocess.Popen(cmd, cwd=BASE_DIR)
+    process = subprocess.Popen(cmd, cwd=BASE_DIR)
+    # Reap the child as soon as it exits, so other processes checking its pid see it gone
+    # rather than a zombie that still answers.
+    threading.Thread(target=process.wait, daemon=True).start()
+    client_process = process
+    feed = {"pid": process.pid, "symbol": symbol, "exchange": exchange, "started": time.time()}
+    write_json(FEED_FILE, feed)
+    return feed
+
+
+def stop_feed():
+    """Stop the recorded feed, whichever process started it. Returns whether one was running."""
+    global client_process
+    feed = read_feed()
+    was_running = bool(feed) and pid_alive(feed["pid"])
+    if was_running and (client_process is None or client_process.pid != feed["pid"]):
+        stop_pid(feed["pid"])
+    if client_process is not None:
+        stop_websocket_client(client_process)
+        client_process = None
+    remove_file(FEED_FILE)
+    return was_running
+
+
+def stop_pid(pid):
+    """Stop a feed another process started. Only a pid the feed client itself reported is
+    signalled, so a stale record whose pid was reused never takes down something else."""
+    if (read_json(STATUS_FILE) or {}).get("pid") != pid:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        return
+    for sig, wait in ((signal.SIGTERM, 3.0), (signal.SIGKILL, 2.0)):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if not pid_alive(pid):
+                return
+            time.sleep(0.05)
 
 
 def stop_websocket_client(process):
@@ -114,15 +228,15 @@ def read_orderbook_data(last_modified):
     return (data, modified) if data else (None, last_modified)
 
 
-def feed_state():
-    """(state, label, detail) derived from the process and the status file the client writes."""
-    status = read_json(STATUS_FILE) or {}
-    proc = client_process
-    if proc is None:
+def feed_state(feed=None):
+    """(state, label, detail) derived from the feed record and the status file the client writes."""
+    feed = feed or read_feed()
+    if not feed:
         return "idle", "Idle", "Press Start to connect a feed"
-    code = proc.poll()
-    if code is not None:
-        err = status.get("error") or f"exited with code {code}"
+    status = read_json(STATUS_FILE) or {}
+    if not pid_alive(feed["pid"]):
+        code = client_process.poll() if client_process is not None and client_process.pid == feed["pid"] else None
+        err = status.get("error") or (f"exited with code {code}" if code is not None else "the client exited")
         return "down", "Offline", f"Feed process stopped: {err}"
     book_time = status.get("last_book_time")
     if status.get("state") == "live" and book_time and time.time() - book_time < STALE_AFTER:
@@ -133,6 +247,27 @@ def feed_state():
         status.get("state"), "Starting")
     detail = status.get("error") or (f"Trying {status['source']}" if status.get("source") else "Launching client")
     return "warn", label, detail
+
+
+def feed_where(feed):
+    return f"{VENUE_NAMES.get(feed.get('exchange'), feed.get('exchange') or '')} {feed.get('symbol', '')}".strip()
+
+
+def feed_line(state, label, detail, feed):
+    """(text, tone) for the line under Start and Stop: what the feed is doing and what to press."""
+    if state == "idle" or not feed:
+        return "Stopped. Press Start to connect.", "idle"
+    where = feed_where(feed)
+    if state == "live":
+        return f"Running on {where}. Press Stop to end it.", "live"
+    if state == "down":
+        return f"{detail}. Press Start to try again.", "error"
+    if label == "Stale":
+        return f"Running on {where}, but {detail[0].lower()}{detail[1:]}. Press Stop to end it.", "warn"
+    if label == "Retrying":
+        return f"{detail}. Press Stop to give up.", "warn"
+    verb = "Reconnecting" if label == "Reconnecting" else "Connecting"
+    return f"{verb} to {where}…", "busy"
 
 
 def book_freshness(book, feed):
@@ -250,6 +385,8 @@ app.layout = html.Div([
                     html.Button("Start stream", id="start-button", className="btn btn-go"),
                     html.Button("Stop", id="stop-button", className="btn btn-stop"),
                 ], className="btn-row"),
+                html.Div("Stopped. Press Start to connect.", id="feed-hint", className="feed-hint idle",
+                         role="status", **{"aria-live": "polite"}),
                 html.Div(id="ticket-error", className="ticket-error", role="alert"),
             ], className="ticket"),
 
@@ -323,6 +460,11 @@ app.layout = html.Div([
 
     dcc.Interval(id="interval-component", interval=500, n_intervals=0),
     dcc.Interval(id="clock-interval", interval=1000, n_intervals=0),
+    # The line under Start and Stop is drawn in the browser from these three, so a click
+    # shows Starting… or Stopping… at once instead of after the server answers.
+    dcc.Store(id="feed-line"),     # the feed's state, from the painter
+    dcc.Store(id="feed-pending"),  # a click the server has not answered yet
+    dcc.Store(id="feed-note"),     # the server's answer to the last click
 ], className="app")
 
 
@@ -444,9 +586,42 @@ def tick_clock(_):
     return datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
 
 
+def feed_action(action, asset=None, exchange=None):
+    """
+    Carry out Start or Stop and say what happened: (ticket_error, note, tone).
+
+    Start on the feed that is already running leaves it alone rather than restarting it,
+    which used to look like the click did nothing. Start on another venue or instrument
+    switches. A start that fails says why instead of leaving the desk on Idle.
+    """
+    with feed_lock():
+        feed = running_feed()
+        if action == "start":
+            symbol = clean_symbol(asset)
+            if not symbol:
+                return "Instrument must look like BTC-USDT-SWAP.", "", "idle"
+            exchange = exchange or "OKX"
+            where = feed_where({"exchange": exchange, "symbol": symbol})
+            if feed and feed.get("symbol") == symbol and feed.get("exchange") == exchange:
+                return "", f"Already running on {where}. Press Stop first to restart it.", "warn"
+            try:
+                stop_feed()
+                start_feed(symbol, exchange)
+            except Exception as e:
+                print(f"Could not start the feed on {where}: {e!r}", file=sys.stderr, flush=True)
+                return f"Could not start the feed: {e}", f"Could not start the feed on {where}.", "error"
+            if feed:
+                return "", f"Switched from {feed_where(feed)} to {where}. Connecting…", "busy"
+            return "", f"Connecting to {where}…", "busy"
+        if not stop_feed():
+            return "", "Already stopped. Press Start to connect.", "warn"
+        return "", "Stopped.", "idle"
+
+
 @app.callback(
     Output("ticket-error", "children"),
     Output("asset-input", "className"),
+    Output("feed-note", "data"),
     Input("start-button", "n_clicks"),
     Input("stop-button", "n_clicks"),
     State("asset-input", "value"),
@@ -455,27 +630,62 @@ def tick_clock(_):
 )
 def handle_stream_control(start_clicks, stop_clicks, asset, exchange):
     """
-    Start and stop the feed. A rejected instrument is reported on the field itself; the feed
-    panel is left to describe the feed, which it now does from live state rather than from
-    whatever was last requested.
+    Start and stop the feed. A rejected instrument is reported on the field itself; what the
+    click did goes in the line under the buttons. `seq` tells the browser which click this
+    answers, so it can stop showing Starting… or Stopping….
     """
-    global client_process, stream_meta, orderbook_data, data_last_modified, update_count
-    with _lock:
-        if ctx.triggered_id == "start-button":
-            symbol = clean_symbol(asset)
-            if not symbol:
-                return "Instrument must look like BTC-USDT-SWAP.", "input mono invalid"
-            stop_websocket_client(client_process)
-            orderbook_data, data_last_modified, update_count = None, 0.0, 0
-            calc_latency_us.clear()
-            client_process = start_websocket_client(symbol, exchange or "OKX")
-            stream_meta = {"symbol": symbol, "exchange": exchange, "started": time.time()}
-            return "", "input mono"
-        if ctx.triggered_id == "stop-button":
-            stop_websocket_client(client_process)
-            client_process = None
-            return "", "input mono"
-    return dash.no_update, dash.no_update
+    if ctx.triggered_id not in ("start-button", "stop-button"):
+        return dash.no_update, dash.no_update, dash.no_update
+    action = "start" if ctx.triggered_id == "start-button" else "stop"
+    error, note, tone = feed_action(action, asset, exchange)
+    invalid = action == "start" and error and not note
+    return (error, "input mono invalid" if invalid else "input mono",
+            {"seq": (start_clicks or 0) + (stop_clicks or 0), "text": note, "tone": tone,
+             "until": time.time() + NOTE_SECONDS})
+
+
+app.clientside_callback(
+    """
+    function(startClicks, stopClicks) {
+        const trig = (window.dash_clientside.callback_context.triggered || [])[0] || {};
+        const stopping = (trig.prop_id || "").indexOf("stop-button") === 0;
+        const text = stopping ? "Stopping…" : "Starting…";
+        return [{seq: (startClicks || 0) + (stopClicks || 0), at: Date.now(), text: text},
+                text, "feed-hint busy"];
+    }
+    """,
+    # Painted here as well as below: Dash holds the callback below until the server has
+    # answered the click, so without this Starting… would never be seen.
+    Output("feed-pending", "data"),
+    Output("feed-hint", "children", allow_duplicate=True),
+    Output("feed-hint", "className", allow_duplicate=True),
+    Input("start-button", "n_clicks"),
+    Input("stop-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(line, pending, note) {
+        line = line || {text: "Stopped. Press Start to connect.", tone: "idle", now: 0};
+        if (pending && (!note || pending.seq > note.seq)) {
+            if (Date.now() - pending.at < 15000) {
+                return [pending.text, "feed-hint busy"];
+            }
+            return ["No answer from the server. Check the connection and try again.", "feed-hint error"];
+        }
+        if (note && note.text && line.now < note.until) {
+            return [note.text, "feed-hint " + note.tone];
+        }
+        return [line.text, "feed-hint " + line.tone];
+    }
+    """,
+    Output("feed-hint", "children"),
+    Output("feed-hint", "className"),
+    Input("feed-line", "data"),
+    Input("feed-pending", "data"),
+    Input("feed-note", "data"),
+)
 
 
 @app.callback(
@@ -511,6 +721,7 @@ def handle_stream_control(start_clicks, stop_clicks, asset, exchange):
     Output("depth-chart", "figure"),
     Output("latency-chart", "figure"),
     Output("cost-breakdown-chart", "figure"),
+    Output("feed-line", "data"),
     Input("interval-component", "n_intervals"),
     Input("quantity-input", "value"),
     Input("volatility-slider", "value"),
@@ -527,12 +738,23 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     with the ladder's. Returning them from the same callback means one response carries one
     self-consistent view.
     """
-    global orderbook_data, data_last_modified, update_count
-    state, label, detail = feed_state()
+    global orderbook_data, data_last_modified, update_count, feed_started
+    feed = read_feed()
+    state, label, detail = feed_state(feed)
     pill = f"pill {state}"
+    line_text, line_tone = feed_line(state, label, detail, feed)
+    line = {"text": line_text, "tone": line_tone, "now": time.time()}
+    meta = feed or {}
+
+    # A feed started since the cached book was read, here or in another process: the old
+    # book belongs to the previous instrument, so drop it rather than paint it as current.
+    if feed and feed.get("started") != feed_started:
+        feed_started = feed.get("started")
+        orderbook_data, data_last_modified, update_count = None, 0.0, 0
+        calc_latency_us.clear()
 
     new_data, modified = read_orderbook_data(data_last_modified)
-    if new_data and client_process is not None:
+    if new_data and feed is not None:
         orderbook_data, data_last_modified = new_data, modified
         update_count += 1
 
@@ -545,12 +767,12 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     feed_meta = f"Update #{update_count} · {datetime.now().strftime('%H:%M:%S')}"
     if not book:
         blank = "—"
-        return (pill, label, detail, feed_meta, stream_meta.get("symbol", "—"), stream_meta.get("exchange") or "—",
+        return (pill, label, detail, feed_meta, meta.get("symbol", "—"), meta.get("exchange") or "—",
                 blank, blank, blank, blank, "stat-value", blank,
                 blank, "", blank, "", blank, "", blank, "", blank, "", blank, "",
                 [], [], html.Span("No book yet", className="muted"), "", "", "No data",
                 banner, banner_class, kpis_class, ladder_class, grid_class,
-                empty_figure(), empty_figure("No samples"), empty_figure())
+                empty_figure(), empty_figure("No samples"), empty_figure(), line)
 
     quantity = float(quantity or 0) or 1.0
     volatility = float(volatility or 0.01)
@@ -593,8 +815,8 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
 
     return (
         pill, label, detail, feed_meta,
-        book.get("symbol") or stream_meta.get("symbol", "—"),
-        book.get("source") or stream_meta.get("exchange") or "—",
+        book.get("symbol") or meta.get("symbol", "—"),
+        book.get("source") or meta.get("exchange") or "—",
         f"{s['mid']:,.{dp}f}",
         f"{s['spread_bps']:.2f} bps",
         f"{s['microprice']:,.{dp}f}",
@@ -612,6 +834,7 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
         create_orderbook_depth_chart(book, fill=fill, dp=dp),
         create_latency_time_series(list(calc_latency_us)),
         create_transaction_cost_breakdown(r["slippage"], r["fees"], r["impact"], quantity=quantity),
+        line,
     )
 
 
@@ -681,12 +904,26 @@ def export_data(csv_clicks, excel_clicks):
     return dash.no_update, html.Span("Export failed. See the server log.", className="neg")
 
 
-def _shutdown(*_):
+def stop_own_feed():
+    """On shutdown, stop the feed this process started and drop its record."""
+    if client_process is None:
+        return
+    feed = read_feed()
+    if feed and feed.get("pid") == client_process.pid:
+        remove_file(FEED_FILE)
     stop_websocket_client(client_process)
+
+
+def _shutdown(*_):
+    stop_own_feed()
     sys.exit(0)
 
 
-atexit.register(lambda: stop_websocket_client(client_process))
+# A record left by a previous run whose client is gone would show the feed as Offline on a
+# fresh start; the desk simply starts stopped.
+if read_feed() and not running_feed():
+    remove_file(FEED_FILE)
+atexit.register(stop_own_feed)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _shutdown)
@@ -694,4 +931,4 @@ if __name__ == "__main__":
         port = int(os.environ.get("PORT", 8050))
         app.run(debug=False, use_reloader=False, host="0.0.0.0", port=port)
     finally:
-        stop_websocket_client(client_process)
+        stop_own_feed()

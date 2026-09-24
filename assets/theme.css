@@ -80,6 +80,13 @@ body { -webkit-font-smoothing: antialiased; }
 .field-label { display: block; font: 500 10px var(--sans); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
 /* σ is a variable, not an initial: uppercasing it turns it into Σ, which means something else. */
 .field-symbol { text-transform: none; font-family: var(--mono); margin-left: 4px; }
+.feed-hint { min-height: 16px; margin-top: 8px; font-size: 11px; color: var(--text-2); }
+.feed-hint.live { color: var(--bid); }
+.feed-hint.busy, .feed-hint.warn { color: var(--accent); }
+.feed-hint.error { color: var(--ask); }
+.feed-hint.busy::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%;
+  background: currentColor; vertical-align: 1px; animation: feed-hint-pulse .9s ease-in-out infinite; }
+@keyframes feed-hint-pulse { 50% { opacity: .25; } }
 .ticket-error { min-height: 14px; margin-top: 6px; font-size: 10px; color: var(--ask); }
 .input.invalid, .dash-input-container.input.invalid { border-color: var(--ask); }
 .field-hint { font-size: 10px; color: var(--muted); margin-top: 3px; }

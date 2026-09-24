@@ -52,6 +52,9 @@ build
 __pycache__
 # Runtime files written by the feed client
 feed_status.json
+feed.json
+feed.json.*.tmp
+feed.lock
 latest_orderbook.json.*
 .pytest_cache/
 
