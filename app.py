@@ -964,6 +964,10 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
     State("fee-tier-dropdown", "value"),
     State("side-radio", "value"),
     prevent_initial_call=True,
+    # One request at a time: a second click while Gemini is thinking would only spend the
+    # free tier's per-minute quota on the same question.
+    running=[(Output("generate-analysis-button", "disabled"), True, False),
+             (Output("generate-analysis-button", "children"), "Thinking…", "Generate")],
 )
 def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
     book = orderbook_data
