@@ -188,9 +188,10 @@ class BookIntegrityError(ConnectionError):
 
 class OKXVenue(Venue):
     """
-    OKX `books`: a 400-level snapshot, then deltas. Each delta names the sequence it follows
-    and carries a CRC32 of the top 25 levels, so a missed or misapplied update is caught
-    and the book is resubscribed rather than drifting silently.
+    OKX `books`: a 400-level snapshot, then deltas. Each delta names the sequence it follows,
+    so a missed update is caught and the book is resubscribed rather than drifting silently.
+    Messages also carry a CRC32 of the top 25 levels, which is verified when OKX sends one;
+    OKX currently sends 0 there, meaning no checksum.
 
     `books5` (a fresh top-5 snapshot every 100 ms) is the fallback: after CHECKSUM_STRIKES
     bad deltas in a row (checksum or sequence) the venue switches to it, so a checksum bug can cost depth but
@@ -276,15 +277,18 @@ class OKXVenue(Venue):
                 self._bids, self._asks = {}, {}
             elif self._seq is None or data.get("prevSeqId") != self._seq:
                 self._strike()
-                raise BookIntegrityError(f"OKX: update out of sequence ({data.get('prevSeqId')} after {self._seq})")
+                raise BookIntegrityError(f"update out of sequence ({data.get('prevSeqId')} after {self._seq})")
             self._apply(self._bids, data.get("bids", []))
             self._apply(self._asks, data.get("asks", []))
             self._seq = data.get("seqId")
             bids, asks = self._sorted()
-            if "checksum" in data and not self._checksum_ok(bids, asks, int(data["checksum"])):
+            # OKX now sends checksum 0: the field is kept but no longer computed, so 0 means
+            # "none", and the sequence check above is what catches a missed update.
+            expected = int(data.get("checksum") or 0)
+            if expected and not self._checksum_ok(bids, asks, expected):
                 self._strike()
                 top = f"bid {bids[0][:2] if bids else None} ask {asks[0][:2] if asks else None}"
-                raise BookIntegrityError(f"OKX: checksum mismatch on {msg.get('action')} seq {data.get('seqId')}: "
+                raise BookIntegrityError(f"checksum mismatch on {msg.get('action')} seq {data.get('seqId')}: "
                                          f"okx {data['checksum']}, ours {self.checksum(bids, asks)} raw / "
                                          f"{self.checksum(bids, asks, True)} normalised; {top}; {len(bids)}x{len(asks)} levels")
             if msg.get("action") == "update":
