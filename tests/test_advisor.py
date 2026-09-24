@@ -862,7 +862,7 @@ def test_the_daily_cap_answers_from_the_rules_without_calling_the_api():
 class _PricedReplay(ReplayTransport):
     """A replayed model that reports a cost, standing in for a paid live transport."""
     cost_usd = 0.30
-    usage = {"input_tokens": 1000, "output_tokens": 100}
+    usage: ClassVar[dict] = {"input_tokens": 1000, "output_tokens": 100}
 
 
 def test_a_live_run_stops_at_its_spend_cap(monkeypatch):

@@ -110,7 +110,7 @@ class ClaudeTransport(Transport):
             self._messages.append({"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": use_id, "content": json.dumps(call["result"], sort_keys=True),
                  **({"is_error": True} if isinstance(call["result"], dict) and call["result"].get("error") else {})}
-                for use_id, call in zip(self._pending, dispatched)]})
+                for use_id, call in zip(self._pending, dispatched, strict=True)]})
 
         if self.budget_usd is not None and (self.cost_usd or 0.0) >= self.budget_usd:
             raise SpendCapReached(f"Rate limited: the ${self.budget_usd:.2f} spend cap was reached")
