@@ -27,25 +27,81 @@ BOOK = {
     "timestamp": 1,
 }
 
-OKX_MSG = {"arg": {"channel": "books5", "instId": "BTC-USDT-SWAP"},
-           "data": [{"asks": [["65001.0", "50", "0", "3"], ["65002.0", "100", "0", "4"]],
-                     "bids": [["65000.0", "40", "0", "2"], ["64999.0", "80", "0", "5"]],
-                     "ts": "1758650000000", "seqId": 1}]}
+def _okx(action, bids, asks, seq, prev=-1, checksum=None, channel="books"):
+    data = {"asks": asks, "bids": bids, "ts": "1758650000000", "seqId": seq, "prevSeqId": prev}
+    if channel == "books":
+        levels = lambda rows: sorted(rows, key=lambda r: float(r[0]))  # noqa: E731
+        data["checksum"] = checksum if checksum is not None else wc.OKXVenue.checksum(
+            levels(bids)[::-1], levels(asks))
+    return {"arg": {"channel": channel, "instId": "BTC-USDT-SWAP"}, "action": action, "data": [data]}
+
+
+OKX_MSG = _okx("snapshot", [["65000.0", "40", "0", "2"], ["64999.0", "80", "0", "5"]],
+               [["65001.0", "50", "0", "3"], ["65002.0", "100", "0", "4"]], seq=1)
 
 
 # ----------------------------------------------------------------------------- parsers
 
-def test_okx_books5_converts_contracts_to_base():
+@pytest.fixture(autouse=True)
+def _fresh_okx_strikes():
+    wc.OKXVenue._strikes.clear()
+    yield
+    wc.OKXVenue._strikes.clear()
+
+
+def test_okx_snapshot_converts_contracts_to_base():
     book = wc.validate_book(wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01).parse(OKX_MSG))
     assert book["asks"][0] == [65001.0, 0.5]
     assert book["bids"][0] == [65000.0, 0.4]
     assert book["timestamp"] == 1758650000000
 
 
-def test_okx_ignores_non_book_messages():
+def test_okx_subscribes_to_the_full_book_and_ignores_other_messages():
     venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
-    assert venue.parse({"event": "subscribe", "arg": {"channel": "books5"}}) is None
-    assert venue.subscribe_message()["args"][0]["channel"] == "books5"
+    assert venue.subscribe_message()["args"][0]["channel"] == "books"
+    assert venue.parse({"event": "subscribe", "arg": {"channel": "books"}}) is None
+
+
+def test_okx_checksum_string_is_bids_and_asks_interleaved():
+    """OKX's documented layout: bid1Px:bid1Sz:ask1Px:ask1Sz:..., CRC32 as a signed int."""
+    import zlib
+    crc = zlib.crc32(b"3366.1:7:3366.8:9:3366:6:3368:8")
+    want = crc - (1 << 32) if crc >= (1 << 31) else crc
+    assert wc.OKXVenue.checksum([["3366.1", "7"], ["3366", "6"]], [["3366.8", "9"], ["3368", "8"]]) == want
+
+
+def test_okx_updates_apply_on_top_of_the_snapshot():
+    venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+    venue.parse(OKX_MSG)
+    bids = [["65000.0", "40", "0", "2"], ["64999.0", "80", "0", "5"]]
+    asks = [["65001.0", "0", "0", "0"], ["65002.0", "100", "0", "4"], ["65003.0", "10", "0", "1"]]
+    after = [a for a in asks if a[1] != "0"]
+    update = _okx("update", [], [asks[0], asks[2]], seq=2, prev=1,
+                  checksum=wc.OKXVenue.checksum(bids, after))
+    book = wc.validate_book(venue.parse(update))
+    assert [a[0] for a in book["asks"]] == [65002.0, 65003.0]  # the 65001 level was deleted
+
+
+def test_okx_a_gap_or_a_bad_checksum_forces_a_resubscribe():
+    venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+    venue.parse(OKX_MSG)
+    with pytest.raises(ConnectionError, match="out of sequence"):
+        venue.parse(_okx("update", [], [], seq=9, prev=7))
+    venue.parse(OKX_MSG)
+    with pytest.raises(ConnectionError, match="checksum"):
+        venue.parse(_okx("update", [], [["65005.0", "1", "0", "1"]], seq=2, prev=1, checksum=12345))
+
+
+def test_okx_falls_back_to_books5_after_repeated_checksum_failures():
+    for _ in range(wc.OKXVenue.CHECKSUM_STRIKES):
+        venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+        venue.parse(OKX_MSG)
+        with pytest.raises(ConnectionError):
+            venue.parse(_okx("update", [], [["65005.0", "1", "0", "1"]], seq=2, prev=1, checksum=1))
+    fallback = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+    assert fallback.subscribe_message()["args"][0]["channel"] == "books5"
+    top5 = _okx("snapshot", [["65000.0", "40"]], [["65001.0", "50"]], seq=1, channel="books5")
+    assert wc.validate_book(fallback.parse(top5))["asks"][0] == [65001.0, 0.5]
 
 
 def test_binance_depth20_uses_b_and_a():
@@ -614,3 +670,23 @@ def test_tiles_and_figures_are_built_from_one_computation():
     for figure_id in ("depth-chart", "cost-breakdown-chart", "latency-chart"):
         assert figure_id in painter_outputs, f"{figure_id} must be returned beside the tiles"
     assert outputs.count("depth-chart") == 1
+
+
+def test_a_venue_the_system_store_cannot_verify_is_retried_with_certifi(monkeypatch):
+    import asyncio
+    import ssl
+    calls = []
+
+    async def fake_connect(url, **kw):
+        calls.append(kw.get("ssl"))
+        if kw.get("ssl") is None:
+            raise ssl.SSLCertVerificationError("unable to get local issuer certificate")
+        return "connection"
+
+    monkeypatch.setattr(wc.websockets, "connect", fake_connect)
+    monkeypatch.setitem(wc._WS_TLS, "certifi", False)
+    assert asyncio.run(wc.open_ws("wss://example.invalid/ws")) == "connection"
+    assert calls[0] is None and isinstance(calls[1], ssl.SSLContext)
+    calls.clear()
+    asyncio.run(wc.open_ws("wss://example.invalid/ws"))  # later connects go straight to certifi
+    assert len(calls) == 1 and isinstance(calls[0], ssl.SSLContext)

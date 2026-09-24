@@ -130,3 +130,14 @@ def test_a_schedule_beyond_the_priceable_slice_count_is_capped_and_says_so():
     out = _call("review_plan", side="buy", notional_usd=400_000, book="thin", plan=plan)
     assert out["plan"]["slices"] == 20 and any("above the 20" in p for p in out["schema_repairs"])
     assert [p["label"] for p in out["priced"] if p["advised"]] == ["TWAP x20"] and out["approvable"] is False
+
+
+def test_a_plan_without_a_limit_price_is_not_a_repair():
+    """limit_price is optional; leaving it out must not make a valid plan unapprovable."""
+    book = load_book("deep_tight")
+    advice = run_advisor(RuleTransport("buy", 1_000, "Market"), book, "buy", 1_000).advice
+    plan = {k: v for k, v in advice.items() if k != "limit_price"}
+    out = _call("review_plan", side="buy", notional_usd=1_000, book="deep_tight", plan=plan)
+    assert out["schema_repairs"] == [] and out["approvable"] is True
+    bad = _call("review_plan", side="buy", notional_usd=1_000, book="deep_tight", plan={**plan, "limit_price": "cheap"})
+    assert bad["schema_repairs"] and bad["approvable"] is False
