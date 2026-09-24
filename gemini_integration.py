@@ -15,10 +15,12 @@ nothing, which meant the deployed demo was dead for anyone without a key. The ba
 walks the same book through the same tools and returns the same schema, so the panel is
 always useful and the label says which produced the read.
 
-Model: GEMINI_MODEL (default gemini-3.5-flash-lite), falling through GEMINI_FALLBACK_MODELS
-(comma-separated, default gemini-3.8-flash) when a model is retired, busy or out of quota.
-Lite leads because one click is up to seven calls: on the free tier it allows 15 a minute
-and 500 a day, where 3.8 Flash allows 5 and 20, about three clicks a day. A model that
+Model: GEMINI_MODEL (default gemini-3.8-flash), falling through GEMINI_FALLBACK_MODELS
+(comma-separated, default gemini-3.5-flash-lite) when a model is retired, busy or out of quota.
+The key is on the paid tier, where 3.8 Flash's limits are no longer the bottleneck, so the
+stronger model leads. On the free tier (5 calls a minute, 20 a day for 3.8 Flash, and one
+click is up to seven calls) set GEMINI_MODEL=gemini-3.5-flash-lite instead. Because the demo
+is public and paid, GEMINI_DAILY_REQUESTS (default 150) caps advisor requests per UTC day. A model that
 fails is rested (see ModelCooldown) rather than tried first on every call. The API key is
 read from GEMINI_API_KEY or GOOGLE_API_KEY and is never logged.
 
@@ -36,16 +38,20 @@ import time
 
 from dotenv import load_dotenv
 
-from advisor.advisor import (AdviceInvalid, GeminiTransport, ModelCooldown, ModelsResting, RateLimited,
-                             RuleTransport, is_daily_quota, is_quota, is_timeout, is_upstream, run_advisor)
+from advisor.advisor import (AdviceInvalid, DailyCapReached, GeminiTransport, ModelCooldown, ModelsResting,
+                             RateLimited, RuleTransport, is_daily_quota, is_quota, is_timeout, is_upstream,
+                             run_advisor)
 from advisor.schema import strategy_label
 
 load_dotenv()
 
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash").split(",")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                    if m.strip()]
+# The demo is public and the key is on the paid tier, so a stranger clicking Generate spends
+# real credit. This caps advisor requests per UTC day; past it the panel answers from the rules.
+DAILY_REQUESTS = int(os.environ.get("GEMINI_DAILY_REQUESTS", "150"))
 CALL_TIMEOUT = float(os.environ.get("GEMINI_CALL_TIMEOUT", "20"))  # seconds per API call
 REQUEST_DEADLINE = float(os.environ.get("GEMINI_DEADLINE", "40"))  # seconds for one click, all calls
 MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "5"))  # seconds between advisor requests
@@ -91,6 +97,12 @@ class GeminiAnalyzer:
             wait = self.min_interval - (time.time() - getattr(self, "_last_request", 0.0))
             if wait > 0:
                 raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            if getattr(self, "_day", None) != today:
+                self._day, self._requests_today = today, 0
+            if self._requests_today >= getattr(self, "daily_requests", DAILY_REQUESTS):
+                raise DailyCapReached("Rate limited: today's advisor requests are used up")
+            self._requests_today += 1
             self._last_request = time.time()
         transport = GeminiTransport(self.client, self.models, cooldown=self.cooldown,
                                     deadline_s=REQUEST_DEADLINE, call_timeout_s=CALL_TIMEOUT)
@@ -200,7 +212,9 @@ class GeminiAnalyzer:
 def gemini_notice(error, min_interval=MIN_INTERVAL):
     """One line for the panel on why Gemini did not answer, classified from the exception."""
     code = getattr(error, "code", None)
-    if isinstance(error, ModelsResting):
+    if isinstance(error, DailyCapReached):
+        why = "today's Gemini allowance for this public demo is used up; it resets at 00:00 UTC"
+    elif isinstance(error, ModelsResting):
         why = "every Gemini model is resting after hitting its free-tier limit"
     elif isinstance(error, RateLimited):
         why = f"Gemini is paced to one request every {min_interval:.0f}s on the free tier"

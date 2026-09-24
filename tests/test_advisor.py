@@ -841,3 +841,15 @@ def test_a_retired_default_is_replaced_even_when_the_run_then_fails():
     analyzer = _live_analyzer(client, models=("old", "new"))
     analyzer.analyze(DEEP, 1_000, side="buy")
     assert analyzer.model == "new"
+
+
+def test_the_daily_cap_answers_from_the_rules_without_calling_the_api():
+    """The demo is public and the key is paid: past the day's allowance, no more API calls."""
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run())
+    analyzer = _live_analyzer(client, models=("m",))
+    analyzer.daily_requests = 1
+    assert analyzer.analyze(DEEP, 1_000, side="buy")["source"] == "gemini"
+    capped = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert capped["success"] and capped["source"] == "baseline"
+    assert "allowance" in capped["notice"] and len(client.models.calls) == 3

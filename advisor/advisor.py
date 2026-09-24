@@ -278,6 +278,10 @@ class ModelsResting(RateLimited):
     """Every model is cooling down after a failure, so the request was not sent."""
 
 
+class DailyCapReached(RateLimited):
+    """The day's allowance of model requests is spent, so the request was not sent."""
+
+
 class AdviceInvalid(ValueError):
     """The model answered, but its answer could not be parsed or failed validation."""
 
