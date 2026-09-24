@@ -690,3 +690,45 @@ def test_a_venue_the_system_store_cannot_verify_is_retried_with_certifi(monkeypa
     calls.clear()
     asyncio.run(wc.open_ws("wss://example.invalid/ws"))  # later connects go straight to certifi
     assert len(calls) == 1 and isinstance(calls[0], ssl.SSLContext)
+
+
+def test_okx_checksum_over_normalised_numbers_is_accepted():
+    """If OKX computes the checksum without trailing zeros ('12.50' -> '12.5'), the book still verifies."""
+    bids = [["65000.0", "40.10", "0", "2"]]
+    asks = [["65001.0", "50.00", "0", "3"]]
+    normalised = wc.OKXVenue.checksum(bids, asks, normalise=True)
+    assert normalised != wc.OKXVenue.checksum(bids, asks)
+    venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+    assert wc.validate_book(venue.parse(_okx("snapshot", bids, asks, seq=1, checksum=normalised)))
+    assert venue._normalise is True
+
+
+def test_a_bad_okx_checksum_retries_okx_then_drops_to_books5(tmp_path, monkeypatch):
+    """An integrity failure is ours, not the venue's: stay on OKX, and after 3 strikes take books5."""
+    subscribed = []
+
+    async def okx(ws):
+        sub = json.loads(await ws.recv())
+        channel = sub["args"][0]["channel"]
+        subscribed.append(channel)
+        msg = (_okx("snapshot", [["65000.0", "40"]], [["65001.0", "50"]], seq=1, checksum=7)
+               if channel == "books" else
+               _okx("snapshot", [["65000.0", "40"]], [["65001.0", "50"]], seq=1, channel="books5"))
+        while True:
+            await ws.send(json.dumps(msg))
+            await asyncio.sleep(0.05)
+
+    async def run():
+        server = await _serve(okx)
+        monkeypatch.setenv("ORDERBOOK_WS_URL_OKX", f"ws://127.0.0.1:{_port(server)}")
+        monkeypatch.setattr(wc, "okx_contract_value", lambda s: 0.01)
+        out = tmp_path / "book.json"
+        task = asyncio.create_task(wc.connect_and_save("BTC-USDT-SWAP", str(out), 0.0, "OKX"))
+        await asyncio.sleep(2.5)
+        task.cancel()
+        server.close()
+        return out
+
+    out = asyncio.run(run())
+    assert subscribed[:4] == ["books"] * 3 + ["books5"]
+    assert json.loads(out.read_text())["source"] == "OKX"
