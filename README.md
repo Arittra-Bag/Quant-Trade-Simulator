@@ -138,9 +138,25 @@ windows on each side, so 28 samples per strategy and size ([report](validation/P
   fill cannot observe permanent impact at all.
 - **At $250k the book never left the touch**: every slice paid the 5 bps taker fee and nothing
   else, so small orders on BTC say nothing about refill.
-- **Passive-limit results are withdrawn** pending a re-score: the first scorer counted any print
-  through the touch as a full fill whatever the order's size, which the identical 0.643 fill at
-  $250k and $10M exposed. It now counts such a print for its own size.
+- **Resting at the touch: the conservative quote is right and the paper fill is not.** Mean
+  cost of a 60 s resting limit, remainder crossed at the end:
+
+  | | $250k | $2.5M | $10M |
+  | --- | ---: | ---: | ---: |
+  | `quote_order` Limit (charges the spread) | 5.08 bps | 7.62 bps | 15.71 bps |
+  | Agent's paper fill (expected value) | 3.14 bps | 5.45 bps | 9.82 bps |
+  | Realised from the tape | 5.08 bps | 7.18 bps | 14.05 bps |
+
+  The paper fill is 1.7 to 4.2 bps too cheap. When the order does not fill, the price has moved
+  away, and crossing after it costs more: adverse selection, which an expected-value fill
+  cannot see. The median is below the mean at every size (3.62 bps at $250k): resting is
+  usually cheaper, and occasionally much dearer.
+- **The queue model's fill rate is close at size, high when small**: mean maker share 0.62,
+  0.16 and 0.05 against 0.39, 0.14 and 0.05 filled from the tape. The tape's figure is a
+  floor, since trades between polls can be missed.
+- **A scorer bug, caught by the numbers**: the first version counted any print through the
+  touch as a full fill whatever the order's size, and "filled" 0.643 of a $250k order and a
+  $10M order alike. A print through the price now counts for its own size.
 
 LangGraph is imported on the first **Plan**, not at start-up; it adds about 33 MB then.
 
