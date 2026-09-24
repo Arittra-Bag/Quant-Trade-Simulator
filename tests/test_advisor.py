@@ -354,6 +354,80 @@ def test_gemini_transport_retries_a_429_when_asked_to():
     assert result.ok and len(client.models.calls) == 4
 
 
+class _Busy(Exception):
+    code = 503
+
+    def __str__(self):
+        return "503 UNAVAILABLE. This model is currently experiencing high demand."
+
+
+class _BadRequest(Exception):
+    code = 400
+
+    def __str__(self):
+        return "400 INVALID_ARGUMENT"
+
+
+def _no_sleep(monkeypatch):
+    slept = []
+    monkeypatch.setattr("advisor.advisor.time.sleep", slept.append)
+    return slept
+
+
+def test_a_busy_model_falls_through_to_the_fallback_without_moving_the_default():
+    """Second live run: 7 of 8 scenarios got 503 high demand and never tried the lite model."""
+    pytest.importorskip("google.genai")
+    client = _client([_Busy()] + _three_call_run())
+    transport = GeminiTransport(client, ["flash", "lite"])
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert result.ok and result.models_used == ["flash", "lite"]  # only the busy call moved
+    assert client.models.calls == ["flash", "lite", "flash", "flash"]
+    assert transport.model == "flash"  # busy is not retired
+
+
+def test_a_busy_model_is_retried_with_backoff_before_falling_through(monkeypatch):
+    pytest.importorskip("google.genai")
+    slept = _no_sleep(monkeypatch)
+    client = _client([_Busy(), _Busy()] + _three_call_run())
+    result = run_advisor(GeminiTransport(client, ["flash", "lite"], max_retries=2), DEEP, "buy", 1_000)
+    assert result.ok and result.models_used == ["flash"]
+    assert slept == [5.0, 10.0]
+
+
+def test_live_calls_are_paced_across_requests(monkeypatch):
+    pytest.importorskip("google.genai")
+    slept = _no_sleep(monkeypatch)
+    client = _client(_three_call_run() + _three_call_run())
+    transport = GeminiTransport(client, ["m"], call_interval=13)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert len(slept) == 5 and all(0 < s <= 13 for s in slept)  # every call after the first
+
+
+def test_a_provider_outage_is_errored_not_scored():
+    pytest.importorskip("google.genai")
+    result = run_advisor(GeminiTransport(_client([_Busy()]), ["m"]), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error
+
+
+def test_a_request_the_api_rejects_is_our_failure_not_an_outage():
+    pytest.importorskip("google.genai")
+    result = run_advisor(GeminiTransport(_client([_BadRequest()]), ["m", "lite"]), DEEP, "buy", 1_000)
+    assert not result.ok and not result.upstream_error
+
+
+def test_errored_scenarios_are_left_out_of_the_score():
+    rows = [
+        {"candidate": "gemini_live", "scenario": "a", "score": 1.0, "critical_failures": [],
+         "checks": [], "latency_ms": 10.0, "errored": False},
+        {"candidate": "gemini_live", "scenario": "b", "score": 0.08, "critical_failures": ["produced_advice"],
+         "checks": [], "latency_ms": 10.0, "errored": True},
+    ]
+    entry = summarise(rows)["gemini_live"]
+    assert entry["score"] == 1.0 and entry["errored"] == 1 and entry["clean_scenarios"] == 1
+    assert summarise(rows[1:])["gemini_live"]["score"] is None
+
+
 def test_gemini_transport_surfaces_a_429_by_default():
     pytest.importorskip("google.genai")
     client = _client([_Exhausted()])
