@@ -732,3 +732,14 @@ def test_a_bad_okx_checksum_retries_okx_then_drops_to_books5(tmp_path, monkeypat
     out = asyncio.run(run())
     assert subscribed[:4] == ["books"] * 3 + ["books5"]
     assert json.loads(out.read_text())["source"] == "OKX"
+
+
+def test_okx_checksum_zero_means_none_and_the_sequence_still_guards():
+    """Live OKX sends checksum 0 on every message; that must verify, and a gap must still resubscribe."""
+    venue = wc.OKXVenue("BTC-USDT-SWAP", ct_val=0.01)
+    snap = _okx("snapshot", [["84368", "537.07"]], [["84368.1", "1676.68"]], seq=10, checksum=0)
+    assert wc.validate_book(venue.parse(snap))
+    upd = _okx("update", [["84367.9", "12"]], [], seq=11, prev=10, checksum=0)
+    assert len(wc.validate_book(venue.parse(upd))["bids"]) == 2
+    with pytest.raises(wc.BookIntegrityError, match="out of sequence"):
+        venue.parse(_okx("update", [], [], seq=14, prev=12, checksum=0))
