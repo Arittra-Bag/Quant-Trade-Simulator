@@ -334,6 +334,8 @@ def _live_notes(summary):
 
 
 def main(argv=None):
+    from dotenv import load_dotenv
+    load_dotenv()  # a local .env holding GEMINI_API_KEY / ANTHROPIC_API_KEY works like exported keys
     parser = argparse.ArgumentParser(description="Run the advisor eval suite.")
     parser.add_argument("--candidates", default=",".join(CANDIDATES),
                         help="comma-separated candidate names (default: all)")
