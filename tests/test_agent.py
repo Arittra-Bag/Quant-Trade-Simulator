@@ -204,6 +204,18 @@ def test_critic_passes_the_rules_baseline_on_every_scenario():
         assert not blocking(view["findings"]), (scenario["id"], view["findings"])
 
 
+def test_critic_agrees_with_the_graders_on_the_recorded_run():
+    """The numbers the README quotes: every live answer the graders failed is blocked, none that passed."""
+    import json
+
+    from evals.critic_eval import RESULTS, compare, tally
+    from evals.runner import LIVE_CANDIDATES
+    with open(RESULTS) as fh:
+        rows = [r for r in json.load(fh)["rows"] if r["candidate"] in LIVE_CANDIDATES]
+    t = tally(compare(rows))
+    assert t["missed"] == 0 and t["false_alarms"] == 0 and t["caught"] == 3
+
+
 # ------------------------------------------------------------------------------ planners
 
 def test_analyzer_planner_maps_the_panel_result_and_does_not_pace_a_revision():
