@@ -1,2 +1,3 @@
 #!/bin/bash
-python app.py 
+# Production entry point; gunicorn.conf.py sets the worker model.
+exec gunicorn app:server

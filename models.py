@@ -26,6 +26,7 @@ that report exists, treat the impact term as an assumption, not a measurement.
 """
 import math
 import os
+import threading
 import time
 from collections import deque
 
@@ -296,6 +297,7 @@ class VolatilityTracker:
     """
 
     def __init__(self, half_life_s=60.0, min_samples=20, max_gap_s=30.0):
+        """Set the smoothing half-life, the warm-up sample count and the largest usable gap."""
         self.half_life_s = float(half_life_s)
         self.min_samples = int(min_samples)
         self.max_gap_s = float(max_gap_s)
@@ -303,9 +305,17 @@ class VolatilityTracker:
         self._last = None          # (timestamp, mid)
         self.samples = 0
         self.returns = deque(maxlen=512)
+        # The app feeds this from its book watcher and from every paint and advisor call, on
+        # several threads; each update reads and replaces the last price, so one at a time.
+        self._guard = threading.Lock()
 
     def update(self, mid, ts=None):
         """Feed one mid price. Returns the current daily sigma, or None if not ready."""
+        with self._guard:
+            return self._update(mid, ts)
+
+    def _update(self, mid, ts):
+        """Fold one mid into the estimate. Called with the guard held."""
         try:
             mid = float(mid)
         except (TypeError, ValueError):

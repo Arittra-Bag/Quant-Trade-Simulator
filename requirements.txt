@@ -1,5 +1,6 @@
 # Pinned so a redeploy cannot silently pull in breaking releases.
 dash==4.4.1
+flask-compress==1.25
 plotly==7.1.0
 websockets==16.1.1
 numpy==2.4.6
