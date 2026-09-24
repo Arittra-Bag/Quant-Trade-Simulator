@@ -44,7 +44,7 @@ def painter(tmp_path, monkeypatch):
         os.utime(book_file, (mtime, mtime))
 
     def paint(order=ORDER, painted=None):
-        return dict(zip(app.PAINT_KEYS, app.update_tables(1, *order, painted)))
+        return dict(zip(app.PAINT_KEYS, app.update_tables(1, *order, painted), strict=True))
 
     return write_book, paint
 
@@ -84,7 +84,7 @@ def test_changed_order_repaints(painter):
     write_book, paint = painter
     write_book()
     key = paint()["painted.data"]
-    assert sent(paint(order=(50_000,) + ORDER[1:], painted=key)) == set(app.PAINT_KEYS)
+    assert sent(paint(order=(50_000, *ORDER[1:]), painted=key)) == set(app.PAINT_KEYS)
 
 
 def test_idle_desk_sends_only_the_clock_after_the_first_paint(painter, monkeypatch):
@@ -142,3 +142,33 @@ def test_watcher_takes_in_books_with_no_browser_polling(painter, monkeypatch):
     assert app.update_count == 2
     assert models._tracker.samples == 1, "each new book is one volatility sample"
     assert not app._watcher.is_alive(), "the watcher stops with the feed"
+
+
+def test_watcher_survives_a_failed_feed_read(painter, monkeypatch):
+    """A transient error reading the feed record must not end the watcher."""
+    calls = []
+
+    def flaky():
+        """Fail the first read, then report no feed."""
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError("feed.json busy")
+        return None  # then the feed is gone, so the watcher exits cleanly
+
+    monkeypatch.setattr(app, "running_feed", flaky)
+    monkeypatch.setattr(app, "WATCH_BOOKS", True)
+    monkeypatch.setattr(app, "WATCH_SECONDS", 0.01)
+    app.watch_books()
+    assert len(calls) == 2
+
+
+def test_start_launches_the_watcher(monkeypatch):
+    """Books are taken in from Start, before any browser has polled."""
+    started = []
+    monkeypatch.setattr(app, "running_feed", lambda: None)
+    monkeypatch.setattr(app, "stop_feed", lambda: False)
+    monkeypatch.setattr(app, "start_feed", lambda symbol, exchange: {})
+    monkeypatch.setattr(app, "ensure_book_watcher", lambda: started.append(True))
+    monkeypatch.setattr(app, "fcntl", None)
+    app.feed_action("start", "BTC-USDT-SWAP", "SIM")
+    assert started == [True]
