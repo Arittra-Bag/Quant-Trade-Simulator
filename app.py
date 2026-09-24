@@ -83,11 +83,8 @@ class StaticBundleCache:
         self._guard = threading.Lock()
 
     def get(self, key):
-        with self._guard:
-            value = self._store.get(key)
-            if value is not None:
-                self._store.move_to_end(key)
-            return value
+        # A plain read: flask-compress calls set() after every get(), which records the use.
+        return self._store.get(key)
 
     def set(self, key, value):
         if self.MARKER not in key:
@@ -100,8 +97,10 @@ class StaticBundleCache:
 
 
 def bundle_cache_key(request):
-    # The path alone: the query string is not part of what Dash serves.
-    if request.method == "GET" and request.path.startswith("/_dash-component-suites/"):
+    # The path alone: the query string is not part of what Dash serves. Under a URL prefix
+    # the bundles move with it.
+    bundles = f"{app.config.routes_pathname_prefix}_dash-component-suites/"
+    if request.method == "GET" and request.path.startswith(bundles):
         return StaticBundleCache.MARKER + request.path
     return ""
 
