@@ -10,7 +10,7 @@ import threading
 import time
 from collections import deque
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 
 try:
     import fcntl
@@ -458,7 +458,12 @@ app.layout = html.Div([
         ], className="col col-right"),
     ], id="grid", className="grid"),
 
-    dcc.Interval(id="interval-component", interval=500, n_intervals=0),
+    # Polling is paced in the browser: the next poll goes out only once the last one has
+    # answered. A fixed 500 ms poll froze the desk on a slow link, because Dash drops a
+    # response that arrives after the next poll has already been sent, so none ever landed.
+    dcc.Interval(id="interval-component", interval=250, n_intervals=0),
+    dcc.Store(id="poll-tick"),
+    dcc.Store(id="poll-ack"),
     dcc.Interval(id="clock-interval", interval=1000, n_intervals=0),
     # The line under Start and Stop is drawn in the browser from these three, so a click
     # shows Starting… or Stopping… at once instead of after the server answers.
@@ -581,9 +586,51 @@ def show_volatility(v):
     return f"{(v or 0):.3f}"
 
 
-@app.callback(Output("hdr-clock", "children"), Input("clock-interval", "n_intervals"))
-def tick_clock(_):
-    return datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+app.clientside_callback(
+    """
+    function(_) {
+        return new Date().toISOString().slice(11, 19) + " UTC";
+    }
+    """,
+    Output("hdr-clock", "children"),
+    Input("clock-interval", "n_intervals"),
+)
+
+app.clientside_callback(
+    """
+    function(_) {
+        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0};
+        const now = Date.now();
+        // A hidden tab needs no updates; skipping them spares the server's one CPU.
+        if (document.hidden) {
+            return window.dash_clientside.no_update;
+        }
+        // Wait for the answer, but give up on one lost for 10 s so polling never stalls.
+        if ((s.inflight && now - s.sent < 10000) || now - s.sent < 500) {
+            return window.dash_clientside.no_update;
+        }
+        s.inflight = true;
+        s.sent = now;
+        return now;
+    }
+    """,
+    Output("poll-tick", "data"),
+    Input("interval-component", "n_intervals"),
+)
+
+app.clientside_callback(
+    """
+    function(_) {
+        // The poll has answered. Marked here, not in the pacer above, because an input on
+        // the pacer from the poll's own output would be a loop Dash never fires.
+        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0};
+        s.inflight = false;
+        return Date.now();
+    }
+    """,
+    Output("poll-ack", "data"),
+    Input("feed-line", "data"),
+)
 
 
 def feed_action(action, asset=None, exchange=None):
@@ -722,7 +769,7 @@ app.clientside_callback(
     Output("latency-chart", "figure"),
     Output("cost-breakdown-chart", "figure"),
     Output("feed-line", "data"),
-    Input("interval-component", "n_intervals"),
+    Input("poll-tick", "data"),
     Input("quantity-input", "value"),
     Input("volatility-slider", "value"),
     Input("fee-tier-dropdown", "value"),
