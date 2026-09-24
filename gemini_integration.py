@@ -17,8 +17,8 @@ always useful and the label says which produced the read.
 
 Model: GEMINI_MODEL (default gemini-3.5-flash-lite), falling through GEMINI_FALLBACK_MODELS
 (comma-separated, default gemini-3.8-flash) when a model is retired, busy or out of quota.
-Lite leads on the live eval (evals/RESULTS.md): 95.3% in 6.1 s and 6,170 tokens a scenario,
-against 3.8 Flash's 94.4% in 16.1 s and 14,661 tokens. The bigger model scored no better
+Lite leads on the live eval (evals/RESULTS.md): 98.4% in 6.1 s and 6,170 tokens a scenario,
+against 3.8 Flash's 97.5% in 16.1 s and 14,661 tokens. The bigger model scored no better
 and took over twice as long, so it is only the fallback. Because the demo
 is public and paid, GEMINI_DAILY_REQUESTS (default 150) caps advisor requests per UTC day. A model that
 fails is rested (see ModelCooldown) rather than tried first on every call. The API key is
