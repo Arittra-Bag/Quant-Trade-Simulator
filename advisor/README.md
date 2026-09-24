@@ -68,7 +68,7 @@ structured response schema in the same request, so the loop runs with tools and 
 text and then makes one separate schema-constrained call handed the tool transcript.
 That is the `_finalise` step. It falls through `GEMINI_FALLBACK_MODELS` when a model ID
 is retired, and remembers what worked. A busy model (503) or a spent quota (429) also
-falls through, for that call only, after any retries.
+falls through, for that call only, with no retry.
 
 `ReplayTransport` plays a fixed script, which is how the loop, the dispatch and the
 validator are exercised in CI with no key and no network.
@@ -87,12 +87,14 @@ python -m evals.runner --markdown evals/RESULTS.md --json evals/results.json
 python -m evals.runner --live                              # adds the real API, needs a key
 ```
 
-A live run spaces API calls `GEMINI_CALL_INTERVAL` seconds apart (default 13, which keeps
-a free-tier key under its 5 calls a minute; set 0 on a paid key), retries 429 and 503,
-and prints which model answered. A scenario where the provider failed before the model
-answered is reported as errored and left out of the score, since it measured the
-provider rather than the advisor. If every scenario errors, the run says the live
-candidate was not measured and exits 1.
+A live run is built for the Gemini free tier (5 calls a minute per model). Calls are
+spaced `GEMINI_CALL_INTERVAL` seconds apart (default 13), each call gives up after
+`GEMINI_CALL_TIMEOUT` seconds (default 60), and no new scenario starts after
+`GEMINI_RUN_BUDGET` seconds (default 900). Nothing is retried: a busy or rate-limited call
+goes once to the fallback model, and if that fails the scenario is marked errored and left
+out of the score, since it measured the provider rather than the advisor. One line prints
+per scenario and `evals/results.json` is rewritten after each, so a run stopped early keeps
+what finished. A full run is about 10 minutes; `--scenario <id>` runs one in about a minute.
 
 Eight scenarios covering a deep tight book, real size, orders that run past the visible
 book on both sides, a wide spread, an imbalanced book, a sell order, and a size nothing

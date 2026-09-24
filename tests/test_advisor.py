@@ -346,12 +346,11 @@ class _Exhausted(Exception):
         return "429 RESOURCE_EXHAUSTED"
 
 
-def test_gemini_transport_retries_a_429_when_asked_to():
+def test_a_spent_quota_passes_the_call_to_the_fallback_model():
     pytest.importorskip("google.genai")
-    turns = _three_call_run()
-    client = _client([_Exhausted()] + turns)
-    result = run_advisor(GeminiTransport(client, ["m"], max_retries=1), DEEP, "buy", 1_000)
-    assert result.ok and len(client.models.calls) == 4
+    client = _client([_Exhausted()] + _three_call_run())
+    result = run_advisor(GeminiTransport(client, ["flash", "lite"]), DEEP, "buy", 1_000)
+    assert result.ok and client.models.calls[:2] == ["flash", "lite"]
 
 
 class _Busy(Exception):
@@ -385,13 +384,36 @@ def test_a_busy_model_falls_through_to_the_fallback_without_moving_the_default()
     assert transport.model == "flash"  # busy is not retired
 
 
-def test_a_busy_model_is_retried_with_backoff_before_falling_through(monkeypatch):
+def test_nothing_is_retried(monkeypatch):
+    """A retry loop on the free tier hung a live run for 18 minutes. One attempt per model."""
     pytest.importorskip("google.genai")
     slept = _no_sleep(monkeypatch)
-    client = _client([_Busy(), _Busy()] + _three_call_run())
-    result = run_advisor(GeminiTransport(client, ["flash", "lite"], max_retries=2), DEEP, "buy", 1_000)
-    assert result.ok and result.models_used == ["flash"]
-    assert slept == [5.0, 10.0]
+    client = _client([_Busy(), _Busy()])
+    result = run_advisor(GeminiTransport(client, ["flash", "lite"]), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error
+    assert client.models.calls == ["flash", "lite"] and slept == []
+
+
+class _Timeout(Exception):
+    def __str__(self):
+        return "The read operation timed out"
+
+
+def test_a_call_that_times_out_is_errored_not_scored():
+    pytest.importorskip("google.genai")
+    result = run_advisor(GeminiTransport(_client([_Timeout()]), ["m"]), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error
+
+
+def test_a_live_run_stops_starting_scenarios_when_its_budget_is_spent(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "LIVE_RUN_BUDGET", -1)
+    monkeypatch.setattr(runner, "_live_transport_factory", lambda: lambda: ReplayTransport([]))
+    saved = []
+    rows = runner.run_suite([], live=True, on_row=lambda r: saved.append(len(r)))
+    assert len(rows) == len(SCENARIOS) and all(r["errored"] for r in rows)
+    assert saved == list(range(1, len(SCENARIOS) + 1))  # results written after every scenario
+    assert summarise(rows)["gemini_live"]["score"] is None
 
 
 def test_live_calls_are_paced_across_requests(monkeypatch):
