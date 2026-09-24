@@ -171,8 +171,10 @@ def validate_advice(raw, expected_side=None):
         errors.append(f"strategy {strategy} needs a positive horizon_seconds")
         horizon = 60
 
+    # Optional: absent means the strategy is not priced. Only a value that is present and
+    # not a number is a repair.
     limit_price, ok = _num(raw.get("limit_price"), 0.0)
-    if not ok:
+    if not ok and raw.get("limit_price") is not None:
         errors.append("limit_price is not a number")
     if limit_price < 0:
         errors.append(f"limit_price {limit_price} is negative")
