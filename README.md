@@ -72,7 +72,7 @@ Optional, for the AI panel, create a `.env` (never committed):
 ```
 GEMINI_API_KEY=your_key_here
 # GEMINI_MODEL=gemini-3.8-flash                 # default
-# GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite  # tried if the default is retired
+# GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite  # tried if the default is retired or busy
 ```
 
 The feed client also runs standalone, writing `latest_orderbook.json` and `feed_status.json`:

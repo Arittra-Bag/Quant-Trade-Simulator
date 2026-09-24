@@ -24,6 +24,7 @@ tests or CI; there is no key in that environment. Everything offline runs throug
 ReplayTransport. See evals/RESULTS.md.
 """
 import os
+import threading
 import time
 
 from dotenv import load_dotenv
@@ -37,7 +38,8 @@ API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                    if m.strip()]
-MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "5"))  # seconds, free-tier rate limits
+MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "5"))  # seconds between advisor requests
+_PACE_LOCK = threading.Lock()
 
 if not API_KEY:
     print("GEMINI_API_KEY not set; the advisor will use the deterministic baseline.")
@@ -69,8 +71,16 @@ class GeminiAnalyzer:
     def _transport(self, side, quantity, order_type):
         if self.client is None:
             return RuleTransport(side, quantity, order_type)
-        transport = GeminiTransport(self.client, self.models, min_interval=self.min_interval)
-        transport.model = self.model  # start from whichever model last worked
+        # Pacing is shared across clicks and guarded, because Dash can run two callbacks at
+        # once. Conversation state is per request, so each request gets its own transport,
+        # starting from whichever model last answered.
+        with _PACE_LOCK:
+            wait = self.min_interval - (time.time() - getattr(self, "_last_request", 0.0))
+            if wait > 0:
+                raise RuntimeError(f"Rate limited, try again in {wait:.0f}s")
+            self._last_request = time.time()
+        transport = GeminiTransport(self.client, self.models)
+        transport.model = self.model
         return transport
 
     def analyze(self, orderbook_data, quantity, fees=0.0, slippage=0.0, impact=0.0,

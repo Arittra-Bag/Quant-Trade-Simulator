@@ -251,12 +251,17 @@ class _NotFound(Exception):
 class _FakeModels:
     def __init__(self, turns, unavailable=()):
         self.turns, self.unavailable, self.calls = list(turns), set(unavailable), []
+        self.contents = []
 
     def generate_content(self, model, contents, config):
         self.calls.append(model)
+        self.contents.append(list(contents))
         if model in self.unavailable:
             raise _NotFound()
-        return self.turns.pop(0)
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        return turn
 
 
 def _client(turns, unavailable=()):
@@ -292,12 +297,142 @@ def test_gemini_transport_reports_failure_when_no_model_is_available():
     assert not result.ok and "NOT_FOUND" in result.errors[0]
 
 
-def test_gemini_transport_honours_the_rate_limit():
+def _three_call_run():
+    return [
+        _FakeResponse(function_calls=[_FakeCall("quote_order", {"side": "buy", "notional_usd": 1000})]),
+        _FakeResponse(text="Book is deep, take it."),
+        _FakeResponse(text=json.dumps(_advice())),
+    ]
+
+
+def test_gemini_rate_limit_does_not_fire_between_calls_of_one_request():
+    """
+    The first live eval scored 7.7%: the 5s limit was checked on every API call, so each
+    scenario made one call, got tool calls back, and died on the second. One request is
+    several calls by design, and the limit is per request.
+    """
     pytest.importorskip("google.genai")
-    transport = GeminiTransport(_client([]), ["m"], min_interval=60)
-    transport._last_call = __import__("time").time()
+    client = _client(_three_call_run())
+    result = run_advisor(GeminiTransport(client, ["m"], min_interval=5), DEEP, "buy", 1_000)
+    assert result.ok and not result.errors, result.errors
+    assert len(client.models.calls) == 3
+
+
+def test_gemini_transport_honours_the_rate_limit_between_requests():
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run() + _three_call_run())
+    transport = GeminiTransport(client, ["m"], min_interval=60)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    second = run_advisor(transport, DEEP, "buy", 1_000)
+    assert not second.ok and "Rate limited" in second.errors[0]
+    assert len(client.models.calls) == 3  # the refused request never reached the API
+
+
+def test_gemini_transport_starts_each_request_with_a_fresh_conversation():
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run() + _three_call_run())
+    transport = GeminiTransport(client, ["m"])
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert len(client.models.contents[3]) == 1  # second request opens with just its prompt
+
+
+class _Exhausted(Exception):
+    code = 429
+    details = {"error": {"details": [
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"}]}}
+
+    def __str__(self):
+        return "429 RESOURCE_EXHAUSTED"
+
+
+def test_gemini_transport_retries_a_429_when_asked_to():
+    pytest.importorskip("google.genai")
+    turns = _three_call_run()
+    client = _client([_Exhausted()] + turns)
+    result = run_advisor(GeminiTransport(client, ["m"], max_retries=1), DEEP, "buy", 1_000)
+    assert result.ok and len(client.models.calls) == 4
+
+
+class _Busy(Exception):
+    code = 503
+
+    def __str__(self):
+        return "503 UNAVAILABLE. This model is currently experiencing high demand."
+
+
+class _BadRequest(Exception):
+    code = 400
+
+    def __str__(self):
+        return "400 INVALID_ARGUMENT"
+
+
+def _no_sleep(monkeypatch):
+    slept = []
+    monkeypatch.setattr("advisor.advisor.time.sleep", slept.append)
+    return slept
+
+
+def test_a_busy_model_falls_through_to_the_fallback_without_moving_the_default():
+    """Second live run: 7 of 8 scenarios got 503 high demand and never tried the lite model."""
+    pytest.importorskip("google.genai")
+    client = _client([_Busy()] + _three_call_run())
+    transport = GeminiTransport(client, ["flash", "lite"])
     result = run_advisor(transport, DEEP, "buy", 1_000)
-    assert not result.ok and "Rate limited" in result.errors[0]
+    assert result.ok and result.models_used == ["flash", "lite"]  # only the busy call moved
+    assert client.models.calls == ["flash", "lite", "flash", "flash"]
+    assert transport.model == "flash"  # busy is not retired
+
+
+def test_a_busy_model_is_retried_with_backoff_before_falling_through(monkeypatch):
+    pytest.importorskip("google.genai")
+    slept = _no_sleep(monkeypatch)
+    client = _client([_Busy(), _Busy()] + _three_call_run())
+    result = run_advisor(GeminiTransport(client, ["flash", "lite"], max_retries=2), DEEP, "buy", 1_000)
+    assert result.ok and result.models_used == ["flash"]
+    assert slept == [5.0, 10.0]
+
+
+def test_live_calls_are_paced_across_requests(monkeypatch):
+    pytest.importorskip("google.genai")
+    slept = _no_sleep(monkeypatch)
+    client = _client(_three_call_run() + _three_call_run())
+    transport = GeminiTransport(client, ["m"], call_interval=13)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert len(slept) == 5 and all(0 < s <= 13 for s in slept)  # every call after the first
+
+
+def test_a_provider_outage_is_errored_not_scored():
+    pytest.importorskip("google.genai")
+    result = run_advisor(GeminiTransport(_client([_Busy()]), ["m"]), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error
+
+
+def test_a_request_the_api_rejects_is_our_failure_not_an_outage():
+    pytest.importorskip("google.genai")
+    result = run_advisor(GeminiTransport(_client([_BadRequest()]), ["m", "lite"]), DEEP, "buy", 1_000)
+    assert not result.ok and not result.upstream_error
+
+
+def test_errored_scenarios_are_left_out_of_the_score():
+    rows = [
+        {"candidate": "gemini_live", "scenario": "a", "score": 1.0, "critical_failures": [],
+         "checks": [], "latency_ms": 10.0, "errored": False},
+        {"candidate": "gemini_live", "scenario": "b", "score": 0.08, "critical_failures": ["produced_advice"],
+         "checks": [], "latency_ms": 10.0, "errored": True},
+    ]
+    entry = summarise(rows)["gemini_live"]
+    assert entry["score"] == 1.0 and entry["errored"] == 1 and entry["clean_scenarios"] == 1
+    assert summarise(rows[1:])["gemini_live"]["score"] is None
+
+
+def test_gemini_transport_surfaces_a_429_by_default():
+    pytest.importorskip("google.genai")
+    client = _client([_Exhausted()])
+    result = run_advisor(GeminiTransport(client, ["m"]), DEEP, "buy", 1_000)
+    assert not result.ok and "RESOURCE_EXHAUSTED" in result.errors[0]
 
 
 # ------------------------------------------------------------------------------ graders
@@ -391,3 +526,27 @@ def test_published_results_are_current():
     for name, entry in summary.items():
         assert f"| `{name}` |" in published
         assert f"{entry['score'] * 100:.1f}%" in published, f"{name} score has moved since RESULTS.md"
+
+
+def test_app_adapter_completes_a_live_request_and_spaces_out_clicks():
+    """The deployed panel had the same per-call limit, so it failed every request with a key."""
+    pytest.importorskip("google.genai")
+    import gemini_integration as gi
+    client = _client(_three_call_run() + _three_call_run())
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, ["m"], "m", 5
+    first = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert first["success"] and first["source"] == "gemini", first
+    second = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert not second["success"] and "Rate limited" in second["analysis"]
+
+
+def test_app_adapter_gives_each_request_its_own_conversation():
+    """Two callbacks in flight must not share one transport's message history."""
+    pytest.importorskip("google.genai")
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = _client([]), ["m"], "m", 0
+    first = analyzer._transport("buy", 1_000, "Market")
+    second = analyzer._transport("buy", 1_000, "Market")
+    assert first is not second

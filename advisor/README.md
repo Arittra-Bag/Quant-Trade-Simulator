@@ -67,7 +67,8 @@ auditable rather than a paragraph you either trust or don't.
 structured response schema in the same request, so the loop runs with tools and free
 text and then makes one separate schema-constrained call handed the tool transcript.
 That is the `_finalise` step. It falls through `GEMINI_FALLBACK_MODELS` when a model ID
-is retired and remembers what worked.
+is retired, and remembers what worked. A busy model (503) or a spent quota (429) also
+falls through, for that call only, after any retries.
 
 `ReplayTransport` plays a fixed script, which is how the loop, the dispatch and the
 validator are exercised in CI with no key and no network.
@@ -85,6 +86,13 @@ python -m evals.runner --candidates rules --scenario deep_small_buy
 python -m evals.runner --markdown evals/RESULTS.md --json evals/results.json
 python -m evals.runner --live                              # adds the real API, needs a key
 ```
+
+A live run spaces API calls `GEMINI_CALL_INTERVAL` seconds apart (default 13, which keeps
+a free-tier key under its 5 calls a minute; set 0 on a paid key), retries 429 and 503,
+and prints which model answered. A scenario where the provider failed before the model
+answered is reported as errored and left out of the score, since it measured the
+provider rather than the advisor. If every scenario errors, the run says the live
+candidate was not measured and exits 1.
 
 Eight scenarios covering a deep tight book, real size, orders that run past the visible
 book on both sides, a wide spread, an imbalanced book, a sell order, and a size nothing

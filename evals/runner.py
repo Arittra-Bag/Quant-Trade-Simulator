@@ -30,6 +30,10 @@ from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
 # A real candidate scoring below this is a regression worth failing CI over.
 SCORE_FLOOR = 0.90
 
+# Seconds between live API calls. The free tier allows 5 calls a minute per model and one
+# scenario is several calls, so the default keeps a whole run under that. Set 0 on a paid key.
+LIVE_CALL_INTERVAL = float(os.environ.get("GEMINI_CALL_INTERVAL", "13"))
+
 
 def _fill_quote_placeholder(transport, scenario, book):
     """Replay scripts may ask for the true quoted cost with the '__QUOTE__' sentinel."""
@@ -70,6 +74,8 @@ def run_one(candidate_name, scenario, live_transport=None):
         "turns": result.turns,
         "latency_ms": round(result.latency_ms, 2),
         "model": result.model,
+        "models_used": result.models_used,
+        "errored": result.upstream_error,
         "errors": result.errors,
     }
 
@@ -84,8 +90,9 @@ def run_suite(candidate_names, live=False):
             print("No GEMINI_API_KEY; skipping the live candidate.", file=sys.stderr)
 
     for name in candidate_names:
+        # One live transport for the whole run, so call pacing carries across scenarios.
+        transport = live_transport_factory() if name == "gemini_live" else None
         for scenario in SCENARIOS:
-            transport = live_transport_factory() if name == "gemini_live" else None
             rows.append(run_one(name, scenario, live_transport=transport))
     return rows
 
@@ -101,14 +108,25 @@ def _live_transport_factory():
     models = [os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")]
     models += [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                if m.strip()]
-    return lambda: GeminiTransport(client, models, min_interval=float(os.environ.get("GEMINI_MIN_INTERVAL", "5")))
+    # Paced per call rather than refused per request, and transient errors (429, 503)
+    # retried and then passed to the fallback model instead of being scored.
+    return lambda: GeminiTransport(client, models, max_retries=3, call_interval=LIVE_CALL_INTERVAL)
 
 
 def summarise(rows):
+    """
+    Per-candidate totals. A scenario where the provider failed before the model answered
+    (quota, overload) is counted as errored and left out of the score: it measured the
+    provider, not the advisor. `score` is None when nothing was scored.
+    """
     by_candidate = {}
     for row in rows:
         entry = by_candidate.setdefault(row["candidate"], {
-            "scenarios": 0, "score_sum": 0.0, "critical": 0, "latency_ms": 0.0, "failed_checks": {}})
+            "scenarios": 0, "errored": 0, "score_sum": 0.0, "critical": 0, "latency_ms": 0.0,
+            "failed_checks": {}})
+        if row.get("errored"):
+            entry["errored"] += 1
+            continue
         entry["scenarios"] += 1
         entry["score_sum"] += row["score"]
         entry["critical"] += 1 if row["critical_failures"] else 0
@@ -118,7 +136,7 @@ def summarise(rows):
                 entry["failed_checks"][check["name"]] = entry["failed_checks"].get(check["name"], 0) + 1
     for entry in by_candidate.values():
         n = max(entry["scenarios"], 1)
-        entry["score"] = round(entry["score_sum"] / n, 4)
+        entry["score"] = round(entry["score_sum"] / n, 4) if entry["scenarios"] else None
         entry["mean_latency_ms"] = round(entry["latency_ms"] / n, 2)
         entry["clean_scenarios"] = entry["scenarios"] - entry["critical"]
     return by_candidate
@@ -132,6 +150,15 @@ def _check_names(rows):
                 seen.add(check["name"])
                 names.append(check["name"])
     return names
+
+
+def _rank(item):
+    score = item[1]["score"]
+    return -1.0 if score is None else -score
+
+
+def _pct(score, width=0):
+    return f"{'n/a':>{width}}" if score is None else f"{score * 100:{width}.1f}%"
 
 
 def to_markdown(rows, summary):
@@ -148,10 +175,10 @@ def to_markdown(rows, summary):
         "| Candidate | Kind | Score | Scenarios without a critical failure | Mean latency | What it is |",
         "| --- | --- | ---: | ---: | ---: | --- |",
     ]
-    for name, entry in sorted(summary.items(), key=lambda kv: -kv[1]["score"]):
+    for name, entry in sorted(summary.items(), key=_rank):
         kind = "measured" if name in REAL_CANDIDATES or name == "gemini_live" else "replay fixture"
         out.append(
-            f"| `{name}` | {kind} | {entry['score'] * 100:.1f}% | "
+            f"| `{name}` | {kind} | {_pct(entry['score'])} | "
             f"{entry['clean_scenarios']}/{entry['scenarios']} | {entry['mean_latency_ms']:.1f} ms | "
             f"{DESCRIPTIONS.get(name, 'Live Gemini via the tool-calling loop.')} |"
         )
@@ -162,7 +189,7 @@ def to_markdown(rows, summary):
     names = _check_names(rows)
     out.append("| Candidate | " + " | ".join(f"`{n}`" for n in names) + " |")
     out.append("| --- | " + " | ".join("---:" for _ in names) + " |")
-    for candidate in sorted(summary, key=lambda c: -summary[c]["score"]):
+    for candidate, _ in sorted(summary.items(), key=_rank):
         failed = summary[candidate]["failed_checks"]
         cells = [str(failed.get(n, 0)) if failed.get(n) else "." for n in names]
         out.append(f"| `{candidate}` | " + " | ".join(cells) + " |")
@@ -232,6 +259,10 @@ def main(argv=None):
         from evals.scenarios import get_scenario
         SCENARIOS = [get_scenario(args.scenario)]
 
+    if args.live and not args.json_path:
+        # A live run costs money and is hard to repeat; always keep the raw rows.
+        args.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
+
     rows = run_suite(names, live=args.live)
     summary = summarise(rows)
 
@@ -247,16 +278,30 @@ def main(argv=None):
     if not args.quiet:
         width = max(len(n) for n in summary) if summary else 10
         print(f"{'candidate':<{width}}  score   clean  mean latency")
-        for name, entry in sorted(summary.items(), key=lambda kv: -kv[1]["score"]):
-            print(f"{name:<{width}}  {entry['score'] * 100:5.1f}%  "
-                  f"{entry['clean_scenarios']}/{entry['scenarios']}    {entry['mean_latency_ms']:7.1f} ms")
+        for name, entry in sorted(summary.items(), key=_rank):
+            errored = f"  ({entry['errored']} errored upstream, not scored)" if entry["errored"] else ""
+            print(f"{name:<{width}}  {_pct(entry['score'], 5)}  "
+                  f"{entry['clean_scenarios']}/{entry['scenarios']}    {entry['mean_latency_ms']:7.1f} ms{errored}")
 
-    regressed = [n for n in summary
-                 if (n in REAL_CANDIDATES or n == "gemini_live") and summary[n]["score"] < SCORE_FLOOR]
+    live = [r for r in rows if r["candidate"] == "gemini_live"]
+    for row in live:
+        if row["errors"]:
+            kind = "errored" if row["errored"] else "failed"
+            print(f"gemini_live {row['scenario']} {kind}: {row['errors'][0]}", file=sys.stderr)
+    if live:
+        used = sorted({m for r in live for m in r.get("models_used", [])})
+        print(f"gemini_live answered by: {', '.join(used) or 'no model'}", file=sys.stderr)
+    if args.live and args.json_path:
+        print(f"full results in {args.json_path}", file=sys.stderr)
+
+    real = [n for n in summary if n in REAL_CANDIDATES or n == "gemini_live"]
+    unmeasured = [n for n in real if summary[n]["score"] is None]
+    regressed = [n for n in real if summary[n]["score"] is not None and summary[n]["score"] < SCORE_FLOOR]
+    if unmeasured:
+        print(f"not measured, every scenario errored upstream: {', '.join(unmeasured)}", file=sys.stderr)
     if regressed:
         print(f"below the {SCORE_FLOOR:.0%} floor: {', '.join(regressed)}", file=sys.stderr)
-        return 1
-    return 0
+    return 1 if unmeasured or regressed else 0
 
 
 if __name__ == "__main__":
