@@ -464,6 +464,7 @@ app.layout = html.Div([
     dcc.Interval(id="interval-component", interval=250, n_intervals=0),
     dcc.Store(id="poll-tick"),
     dcc.Store(id="poll-ack"),
+    dcc.Store(id="painted"),  # which book and order this browser last painted
     dcc.Interval(id="clock-interval", interval=1000, n_intervals=0),
     # The line under Start and Stop is drawn in the browser from these three, so a click
     # shows Starting… or Stopping… at once instead of after the server answers.
@@ -735,7 +736,9 @@ app.clientside_callback(
 )
 
 
-@app.callback(
+# What the painter returns, in order. Named so a poll whose book and order are unchanged
+# can send only the parts that move with the clock, and leave the rest where it is.
+PAINT_OUTPUTS = [
     Output("feed-pill", "className"),
     Output("feed-label", "children"),
     Output("status-display", "children"),
@@ -748,12 +751,18 @@ app.clientside_callback(
     Output("hdr-imb", "children"),
     Output("hdr-imb", "className"),
     Output("hdr-age", "children"),
-    Output("netcost-value", "children"), Output("netcost-sub", "children"),
-    Output("slippage-value", "children"), Output("slippage-sub", "children"),
-    Output("impact-value", "children"), Output("impact-sub", "children"),
-    Output("fees-value", "children"), Output("fees-sub", "children"),
-    Output("makertaker-value", "children"), Output("makertaker-sub", "children"),
-    Output("latency-value", "children"), Output("latency-sub", "children"),
+    Output("netcost-value", "children"),
+    Output("netcost-sub", "children"),
+    Output("slippage-value", "children"),
+    Output("slippage-sub", "children"),
+    Output("impact-value", "children"),
+    Output("impact-sub", "children"),
+    Output("fees-value", "children"),
+    Output("fees-sub", "children"),
+    Output("makertaker-value", "children"),
+    Output("makertaker-sub", "children"),
+    Output("latency-value", "children"),
+    Output("latency-sub", "children"),
     Output("asks-table", "children"),
     Output("bids-table", "children"),
     Output("spread-row", "children"),
@@ -769,14 +778,30 @@ app.clientside_callback(
     Output("latency-chart", "figure"),
     Output("cost-breakdown-chart", "figure"),
     Output("feed-line", "data"),
+    Output("painted", "data"),
+]
+PAINT_KEYS = [f"{o.component_id}.{o.component_property}" for o in PAINT_OUTPUTS]
+
+
+def paint_only(values):
+    """The painter's tuple with `values` (keyed "id.prop") set and everything else untouched."""
+    unknown = set(values) - set(PAINT_KEYS)
+    if unknown:
+        raise KeyError(f"not painter outputs: {sorted(unknown)}")
+    return tuple(values[k] if k in values else dash.no_update for k in PAINT_KEYS)
+
+
+@app.callback(
+    *PAINT_OUTPUTS,
     Input("poll-tick", "data"),
     Input("quantity-input", "value"),
     Input("volatility-slider", "value"),
     Input("fee-tier-dropdown", "value"),
     Input("side-radio", "value"),
     Input("order-type-dropdown", "value"),
+    State("painted", "data"),
 )
-def update_tables(_, quantity, volatility, fee_tier, side, order_type):
+def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
     """
     Paint the whole desk from one book and one set of numbers.
 
@@ -812,14 +837,30 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     ladder_class = "" if freshness in ("fresh", "none") else freshness
     grid_class = "grid" if freshness in ("fresh", "none") else f"grid {freshness}"
     feed_meta = f"Update #{update_count} · {datetime.now().strftime('%H:%M:%S')}"
+    clock = {"feed-pill.className": pill, "feed-label.children": label, "status-display.children": detail,
+             "update-time.children": feed_meta, "data-banner.children": banner,
+             "data-banner.className": banner_class, "kpis.className": kpis_class,
+             "ladder-wrap.className": ladder_class, "grid.className": grid_class, "feed-line.data": line}
     if not book:
+        key = ["no book", meta.get("symbol"), meta.get("exchange")]
+        if key == painted:
+            return paint_only({**clock, "painted.data": key})
         blank = "—"
         return (pill, label, detail, feed_meta, meta.get("symbol", "—"), meta.get("exchange") or "—",
                 blank, blank, blank, blank, "stat-value", blank,
                 blank, "", blank, "", blank, "", blank, "", blank, "", blank, "",
                 [], [], html.Span("No book yet", className="muted"), "", "", "No data",
                 banner, banner_class, kpis_class, ladder_class, grid_class,
-                empty_figure(), empty_figure("No samples"), empty_figure(), line)
+                empty_figure(), empty_figure("No samples"), empty_figure(), line, key)
+
+    # Age of what is on screen, measured from when we received the book. The exchange
+    # timestamp is kept in the raw panel; exchange clocks drift and would make this lie.
+    age_s = max(0.0, time.time() - float(book.get("local_time") or time.time()))
+    # This browser already shows this book for this order: send the feed state and the ages,
+    # not the ladder, tiles and charts again. Keyed per browser, since each tab paints alone.
+    key = [feed_started, data_last_modified, quantity, volatility, fee_tier, side, order_type]
+    if key == painted:
+        return paint_only({**clock, "hdr-age.children": age_str(age_s), "painted.data": key})
 
     quantity = float(quantity or 0) or 1.0
     volatility = float(volatility or 0.01)
@@ -828,9 +869,6 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
     s, fill = r["stats"], r["fill"]
     dp = price_decimals(s["mid"])
 
-    # Age of what is on screen, measured from when we received the book. The exchange
-    # timestamp is kept in the raw panel; exchange clocks drift and would make this lie.
-    age_s = max(0.0, time.time() - float(book.get("local_time") or time.time()))
     lat = np.asarray(calc_latency_us)
 
 
@@ -881,7 +919,7 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type):
         create_orderbook_depth_chart(book, fill=fill, dp=dp),
         create_latency_time_series(list(calc_latency_us)),
         create_transaction_cost_breakdown(r["slippage"], r["fees"], r["impact"], quantity=quantity),
-        line,
+        line, key,
     )
 
 
