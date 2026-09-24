@@ -15,11 +15,11 @@ nothing, which meant the deployed demo was dead for anyone without a key. The ba
 walks the same book through the same tools and returns the same schema, so the panel is
 always useful and the label says which produced the read.
 
-Model: GEMINI_MODEL (default gemini-3.8-flash), falling through GEMINI_FALLBACK_MODELS
-(comma-separated, default gemini-3.5-flash-lite) when a model is retired, busy or out of quota.
-The key is on the paid tier, where 3.8 Flash's limits are no longer the bottleneck, so the
-stronger model leads. On the free tier (5 calls a minute, 20 a day for 3.8 Flash, and one
-click is up to seven calls) set GEMINI_MODEL=gemini-3.5-flash-lite instead. Because the demo
+Model: GEMINI_MODEL (default gemini-3.5-flash-lite), falling through GEMINI_FALLBACK_MODELS
+(comma-separated, default gemini-3.8-flash) when a model is retired, busy or out of quota.
+Lite leads on the live eval (evals/RESULTS.md): 95.3% in 6.1 s and 6,170 tokens a scenario,
+against 3.8 Flash's 94.4% in 16.1 s and 14,661 tokens. The bigger model scored no better
+and took over twice as long, so it is only the fallback. Because the demo
 is public and paid, GEMINI_DAILY_REQUESTS (default 150) caps advisor requests per UTC day. A model that
 fails is rested (see ModelCooldown) rather than tried first on every call. The API key is
 read from GEMINI_API_KEY or GOOGLE_API_KEY and is never logged.
@@ -27,9 +27,9 @@ read from GEMINI_API_KEY or GOOGLE_API_KEY and is never logged.
 When Gemini cannot answer (quota, overload, timeout) the panel shows the deterministic
 baseline's read with a note saying why, instead of an error.
 
-The live Gemini path has NOT been exercised against the real API from this repository's
-tests or CI; there is no key in that environment. Everything offline runs through
-ReplayTransport. See evals/RESULTS.md.
+The tests and CI never call the real API; they run through ReplayTransport and mocked
+clients. The live path has been run against the real models with `python -m evals.runner
+--live`; see evals/RESULTS.md.
 """
 import json
 import os
@@ -47,8 +47,8 @@ from advisor.schema import strategy_label
 load_dotenv()
 
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+FALLBACK_MODELS = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash").split(",")
                    if m.strip()]
 # The demo is public and the key is on the paid tier, so a stranger clicking Generate spends
 # real credit. This caps advisor requests per UTC day; past it the panel answers from the rules.

@@ -418,6 +418,45 @@ def test_a_live_run_stops_starting_scenarios_when_its_budget_is_spent(monkeypatc
     assert summarise(rows)["gemini_flash"]["score"] is None
 
 
+class _Refused(Exception):
+    status_code = 400
+
+    def __str__(self):
+        return "API key is not scoped to a workspace"
+
+
+class _RefusingTransport(ReplayTransport):
+    """The API turns down the first call, before any model answers."""
+
+    def __init__(self):
+        super().__init__([])
+        self.answered_by, self.usage, self.calls = [], {}, 0
+
+    def propose(self, *args):
+        self.calls += 1
+        raise _Refused()
+
+
+def test_a_refused_setup_stops_the_candidate_instead_of_scoring_it(monkeypatch):
+    import evals.runner as runner
+    transport = _RefusingTransport()
+    monkeypatch.setattr(runner, "_live_transport_factory", lambda name: lambda: transport)
+    rows = runner.run_suite([], live=["claude_haiku"])
+    assert len(rows) == len(SCENARIOS) and all(r["errored"] for r in rows)
+    assert rows[0]["setup_error"] and "workspace" in rows[0]["errors"][0]
+    assert transport.calls == 1  # the other scenarios were never started
+    assert "refused the first call" in rows[1]["errors"][0]
+    assert summarise(rows)["claude_haiku"]["score"] is None
+
+
+def test_a_rejected_call_after_the_model_answered_is_still_scored():
+    import evals.runner as runner
+    transport = _RefusingTransport()
+    transport.answered_by = ["m"]  # a model already answered, so the setup works
+    row = runner.run_one("claude_haiku", SCENARIOS[0], live_transport=transport)
+    assert not row["errored"] and not row["setup_error"]
+
+
 def test_saved_results_replace_the_file_whole(tmp_path, monkeypatch):
     import evals.runner as runner
     monkeypatch.setattr(runner, "SCENARIOS", runner.SCENARIOS)  # --scenario narrows it globally

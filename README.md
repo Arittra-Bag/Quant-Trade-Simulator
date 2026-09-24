@@ -50,8 +50,9 @@ This is a cost *estimator*, not a validated execution model. Being specific abou
   out faster would cost more.
 - **Fee schedules are a dated snapshot**, read off each venue's own page rather than fetched
   live, so they drift as venues change their ladders.
-- **The Gemini panel is not covered by the tests or CI.** There is no recorded fixture and no
-  eval for it; it is optional, off by default, and needs a key you supply.
+- **The AI advisor is measured, but on a small sample.** CI runs the eval offline against
+  recorded fixtures; the live models were scored once per scenario (below), which ranks them
+  but does not bound their variance.
 - **Polling UI, one shared feed per server.** This is pre-trade analysis, not an execution
   system, and a public deployment should be treated as single-user.
 
@@ -72,8 +73,8 @@ Optional, for the AI panel, create a `.env` (never committed):
 
 ```
 GEMINI_API_KEY=your_key_here
-# GEMINI_MODEL=gemini-3.8-flash                 # default; on the free tier use gemini-3.5-flash-lite
-# GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite  # tried if the default is retired, busy or out of quota
+# GEMINI_MODEL=gemini-3.5-flash-lite            # default; fastest and cheapest on the live eval
+# GEMINI_FALLBACK_MODELS=gemini-3.8-flash       # tried if the default is retired, busy or out of quota
 # GEMINI_DAILY_REQUESTS=150                     # advisor requests per UTC day before the rules answer
 ```
 
@@ -85,6 +86,44 @@ python websocket_client.py --symbol BTC-USDT-SWAP --exchange OKX
 
 `ORDERBOOK_WS_URL_<VENUE>` (for example `ORDERBOOK_WS_URL_OKX`) overrides a venue's endpoint.
 
+## AI advisor evals
+
+The advisor is a tool-calling loop: the model prices the order with the same cost functions
+the desk uses (`quote_order`, `get_depth_profile`, `compare_schedule`, `get_book_stats`) and
+answers in a fixed JSON schema. `evals/` scores it on 8 recorded books, from a small buy into
+a deep book to an order larger than everything visible, with graders for schema, side,
+whether the cost it cites is one it actually quoted, whether it admits when the book cannot
+show the fill, and tool economy. Offline replay fixtures, each built to break one grader,
+prove the graders catch what they claim to.
+
+Live run, one sample per scenario ([full results](evals/RESULTS.md)):
+
+| Model | Score | Scenarios without a critical failure | Mean latency | Tokens per run | Cost per run |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5` | 97.9% | 8/8 | 12.8 s | 8,322 | $0.011 |
+| `gemini-3.5-flash-lite` | 95.3% | 7/8 | 6.1 s | 6,170 | GCP credit |
+| `gemini-3.8-flash` | 94.4% | 7/8 | 16.1 s | 14,661 | GCP credit |
+| `claude-sonnet-5` (effort low) | 93.8% | 8/8 | 11.1 s | 8,392 | $0.012 |
+| rules baseline | 100.0% | 8/8 | 0.1 ms | - | - |
+
+What it shows:
+
+- **The models are close.** 94 to 98% on one sample each is not a ranking to trust at the
+  second digit. Haiku was the most consistent, with no critical failure in any scenario.
+- **The bigger Gemini did not earn its cost.** 3.8 Flash scored no better than Flash Lite and
+  took 2.6x as long on 2.4x the tokens, so the app leads with Flash Lite and keeps 3.8 Flash
+  as the fallback.
+- **The common miss is grounding.** `cost_grounded` (citing a cost the model never quoted)
+  failed in 8 of the 32 live runs, more than any other check, and the points are lost on the
+  thin-book and oversized orders, where the honest answer is that the book cannot show the fill.
+- **The rules baseline scores 100% by construction.** The graders encode the same thresholds,
+  so it is a consistency check on the harness, not a bar the models are expected to clear.
+
+```bash
+python -m evals.runner                                  # offline, what CI runs
+python -m evals.runner --live --max-usd 0.50            # every live model whose key is set
+```
+
 ## Tests
 
 ```bash
@@ -92,8 +131,8 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-26 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, and
-the feed client driven against local WebSocket servers, including the case where a venue
+221 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
+advisor loop and both model transports against mocked APIs, the eval graders, and the feed client driven against local WebSocket servers, including the case where a venue
 accepts the connection but never sends a book, which must trigger fallback. CI runs the same
 suite on Python 3.11 and 3.12 on every pull request and on every push to `main`, plus an
 import check that the app loads with no feed and no API key.
@@ -107,7 +146,9 @@ import check that the app loads with no feed and no API key.
 | `models.py` | Walk-the-book slippage, permanent impact, measured volatility, maker/taker, book statistics |
 | `fee_model.py` | Per-venue maker and taker fee schedules |
 | `visualizations.py` | Depth, cost-stack and latency charts |
-| `gemini_integration.py` | Optional Gemini read on the book |
+| `gemini_integration.py` | The AI panel: Gemini advisor with fallback, daily cap and rules baseline |
+| `advisor/` | Tool-calling advisor loop, tools, schema, Gemini and Claude transports |
+| `evals/` | Scenarios, graders, replay fixtures and the eval runner |
 | `export.py` | CSV and Excel export of the current book |
 | `validation/` | Records books and the public trade tape, and scores predicted cost against it |
 | `assets/theme.css` | Desk theme, served automatically by Dash |
@@ -117,7 +158,7 @@ import check that the app loads with no feed and no API key.
 
 ## Running on a free instance
 
-The live demo runs on a free web instance (a fraction of a CPU) and the free Gemini tier, so
+The live demo runs on a free web instance (a fraction of a CPU) with a capped Gemini budget, so
 the desk is built to stay responsive on both:
 
 - **Self-paced polling.** The browser asks for the next update only once the last one has
@@ -132,8 +173,8 @@ the desk is built to stay responsive on both:
   compressed JS bundles are cached, not rebuilt for every visitor.
 - **Threaded worker.** Start, Stop and the advisor never wait behind the polls.
 - **Advisor quota.** Generate is locked while a request is running and requests are spaced
-  at least 5 s apart. The demo key is on the paid tier, so 3.8 Flash leads and Flash Lite is
-  the fallback, and a daily cap (150 requests by default) keeps a public page from running up a bill.
+  at least 5 s apart. Flash Lite leads because it was the fastest model on the live eval
+  and scored no worse, 3.8 Flash is the fallback, and a daily cap (150 requests by default) keeps a public page from running up a bill.
   A model that fails is rested instead of being tried first on every call: until midnight
   Pacific for a spent daily quota, for Google's retry delay (or 60 s) for a per-minute quota,
   and 30 s when overloaded or timed out. A click has a 40 s budget. When Gemini cannot answer,

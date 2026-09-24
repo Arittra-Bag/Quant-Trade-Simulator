@@ -491,10 +491,10 @@ def test_adapter_keeps_the_legacy_wrapper_shape():
 
 
 def test_default_model_is_current():
-    """The demo key is on the paid tier, so 3.8 Flash leads and Lite is the fallback."""
+    """Lite leads (fastest, fewest tokens, no worse on the live eval); 3.8 Flash is the fallback."""
     import gemini_integration as gi
-    assert gi.MODEL == "gemini-3.8-flash" or os.environ.get("GEMINI_MODEL")
-    assert "gemini-3.5-flash-lite" in gi.FALLBACK_MODELS or os.environ.get("GEMINI_FALLBACK_MODELS")
+    assert gi.MODEL == "gemini-3.5-flash-lite" or os.environ.get("GEMINI_MODEL")
+    assert "gemini-3.8-flash" in gi.FALLBACK_MODELS or os.environ.get("GEMINI_FALLBACK_MODELS")
 
 
 # --------------------------------------------------------------------------- UI formatting
