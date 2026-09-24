@@ -52,8 +52,8 @@ This is a cost *estimator*, not a validated execution model. Being specific abou
   live, so they drift as venues change their ladders.
 - **The Gemini panel is not covered by the tests or CI.** There is no recorded fixture and no
   eval for it; it is optional, off by default, and needs a key you supply.
-- **500 ms polling UI, one shared feed per server process.** This is pre-trade analysis, not
-  an execution system, and a public deployment should be treated as single-user.
+- **Polling UI, one shared feed per server.** This is pre-trade analysis, not an execution
+  system, and a public deployment should be treated as single-user.
 
 ## Quickstart
 
@@ -61,7 +61,8 @@ This is a cost *estimator*, not a validated execution model. Being specific abou
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python app.py                      # or ./start.sh; serves on $PORT (default 8050)
+python app.py                      # dev server on $PORT (default 8050)
+./start.sh                         # production: gunicorn, configured by gunicorn.conf.py
 ```
 
 Open <http://localhost:8050>, pick a venue and press **Start stream**. Choose **Simulated**
@@ -112,6 +113,25 @@ import check that the app loads with no feed and no API key.
 
 `DOCUMENTATION.md` has the model derivations and the environment configuration in full, and
 `COST_MODEL.md` sets out which parts of a quote are measured and which are still assumptions.
+
+## Running on a free instance
+
+The live demo runs on a free web instance (a fraction of a CPU) and the free Gemini tier, so
+the desk is built to stay responsive on both:
+
+- **Self-paced polling.** The browser asks for the next update only once the last one has
+  answered, at most twice a second, and not at all while the tab is hidden. A slow link
+  updates less often instead of freezing.
+- **Send only what changed.** A poll whose book and order are unchanged returns the feed
+  state and the ages, not the ladder, tiles and charts again.
+- **Cheap charts.** Figures are built as plain dicts rather than `go.Figure` objects, which
+  took a poll from about 55 ms of server time to about 2 ms. The tests still validate every
+  figure through plotly.
+- **Compressed responses.** A live poll is about 3.5 KB on the wire instead of 22 KB, and the
+  compressed JS bundles are cached, not rebuilt for every visitor.
+- **Threaded worker.** Start, Stop and the advisor never wait behind the polls.
+- **Advisor quota.** Generate is locked while a request is running, requests are spaced at
+  least 5 s apart, and a model whose free quota is spent hands the call to the next one.
 
 ## Notes
 
