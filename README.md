@@ -120,7 +120,7 @@ The live demo runs on a free web instance (a fraction of a CPU) and the free Gem
 the desk is built to stay responsive on both:
 
 - **Self-paced polling.** The browser asks for the next update only once the last one has
-  answered, at most twice a second, and not at all while the tab is hidden. A slow link
+  answered, at most twice a second, and every 5 s while the tab is hidden. A slow link
   updates less often instead of freezing.
 - **Send only what changed.** A poll whose book and order are unchanged returns the feed
   state and the ages, not the ladder, tiles and charts again.

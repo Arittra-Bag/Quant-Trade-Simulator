@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -44,7 +44,8 @@ VENUE_NAMES = {value: label for label, value in VENUES}
 # ----------------------------------------------------------------------------- state
 # One feed at a time; this is a single-user simulator. Whether it is running lives in
 # FEED_FILE, not here, so every server process and every restart sees the same answer.
-_lock = threading.Lock()
+_lock = threading.Lock()  # Start and Stop
+_paint_lock = threading.Lock()  # the cached book and latency history below
 client_process = None  # the feed this process started, if any
 feed_started = None  # which feed the cached book below belongs to
 orderbook_data = None
@@ -65,24 +66,39 @@ class StaticBundleCache:
     Flask-Compress cache that keeps only Dash's JS and CSS bundles.
 
     Compressing plotly's multi-megabyte bundle costs over a second of a free instance's CPU,
-    and every new visitor asks for it. The bundle URLs are fingerprinted, so a compressed copy
-    per path and encoding stays valid for the life of the process. Callback responses get an
-    empty key from bundle_cache_key and are never stored.
+    and every new visitor asks for it. Bundle URLs are fingerprinted, so a compressed copy per
+    path and encoding stays valid for the life of the process. Keys without the bundle marker
+    (every callback response) are never stored, and the store is capped, so made-up bundle
+    paths cannot grow it without bound.
     """
+    MARKER = "bundle:"
+    MAX_ENTRIES = 32
+
     def __init__(self):
-        self._store = {}
+        self._store = OrderedDict()
+        self._guard = threading.Lock()
 
     def get(self, key):
-        return self._store.get(key)
+        with self._guard:
+            value = self._store.get(key)
+            if value is not None:
+                self._store.move_to_end(key)
+            return value
 
     def set(self, key, value):
-        if not key.endswith(";"):
+        if self.MARKER not in key:
+            return
+        with self._guard:
             self._store[key] = value
+            self._store.move_to_end(key)
+            while len(self._store) > self.MAX_ENTRIES:
+                self._store.popitem(last=False)
 
 
 def bundle_cache_key(request):
+    # The path alone: the query string is not part of what Dash serves.
     if request.method == "GET" and request.path.startswith("/_dash-component-suites/"):
-        return request.full_path
+        return StaticBundleCache.MARKER + request.path
     return ""
 
 
@@ -635,12 +651,12 @@ app.clientside_callback(
     function(_) {
         const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0};
         const now = Date.now();
-        // A hidden tab needs no updates; skipping them spares the server's one CPU.
-        if (document.hidden) {
-            return window.dash_clientside.no_update;
-        }
-        // Wait for the answer, but give up on one lost for 10 s so polling never stalls.
-        if ((s.inflight && now - s.sent < 10000) || now - s.sent < 500) {
+        // A hidden tab polls every 5 s instead of twice a second: enough to keep the
+        // volatility estimate fed, little enough to spare the server's one CPU.
+        const gap = document.hidden ? 5000 : 500;
+        // Wait for the answer, but give up on one lost for 5 s (a dropped connection or a
+        // restarted worker) so polling never stalls for long.
+        if ((s.inflight && now - s.sent < 5000) || now - s.sent < gap) {
             return window.dash_clientside.no_update;
         }
         s.inflight = true;
@@ -816,12 +832,23 @@ PAINT_OUTPUTS = [
 PAINT_KEYS = [f"{o.component_id}.{o.component_property}" for o in PAINT_OUTPUTS]
 
 
+TILES = ("netcost", "slippage", "impact", "fees", "makertaker", "latency")
+
+
 def paint_only(values):
     """The painter's tuple with `values` (keyed "id.prop") set and everything else untouched."""
     unknown = set(values) - set(PAINT_KEYS)
     if unknown:
         raise KeyError(f"not painter outputs: {sorted(unknown)}")
     return tuple(values[k] if k in values else dash.no_update for k in PAINT_KEYS)
+
+
+def paint_all(values):
+    """The painter's tuple for a full paint, which must set every output."""
+    missing = set(PAINT_KEYS) - set(values)
+    if missing:
+        raise KeyError(f"full paint is missing: {sorted(missing)}")
+    return paint_only(values)
 
 
 @app.callback(
@@ -842,68 +869,94 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
     stack and the tiles reported different market impact and the depth chart's VWAP disagreed
     with the ladder's. Returning them from the same callback means one response carries one
     self-consistent view.
+
+    It always answers: the browser sends its next poll only once feed-line comes back, so an
+    exception here would stall the desk. A failed paint says so and clears `painted`, which
+    makes the next poll repaint in full.
     """
+    try:
+        return paint_desk(quantity, volatility, fee_tier, side, order_type, painted)
+    except Exception as e:
+        print(f"Could not paint the desk: {e!r}", file=sys.stderr, flush=True)
+        return paint_only({"feed-line.data": {"text": "Could not update the desk. Retrying…", "tone": "warn",
+                                              "now": time.time()},
+                           "painted.data": None})
+
+
+def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
     global orderbook_data, data_last_modified, update_count, feed_started
+    side = side or "buy"
     feed = read_feed()
     state, label, detail = feed_state(feed)
-    pill = f"pill {state}"
     line_text, line_tone = feed_line(state, label, detail, feed)
     line = {"text": line_text, "tone": line_tone, "now": time.time()}
     meta = feed or {}
 
-    # A feed started since the cached book was read, here or in another process: the old
-    # book belongs to the previous instrument, so drop it rather than paint it as current.
-    if feed and feed.get("started") != feed_started:
-        feed_started = feed.get("started")
-        orderbook_data, data_last_modified, update_count = None, 0.0, 0
-        calc_latency_us.clear()
+    # Polls run on several threads. The cached book, its counters and the latency history
+    # change together, so each poll updates and reads them as one step.
+    with _paint_lock:
+        # A feed started since the cached book was read, here or in another process: the old
+        # book belongs to the previous instrument, so drop it rather than paint it as current.
+        if feed and feed.get("started") != feed_started:
+            feed_started = feed.get("started")
+            orderbook_data, data_last_modified, update_count = None, 0.0, 0
+            calc_latency_us.clear()
 
-    new_data, modified = read_orderbook_data(data_last_modified)
-    if new_data and feed is not None:
-        orderbook_data, data_last_modified = new_data, modified
-        update_count += 1
+        new_data, modified = read_orderbook_data(data_last_modified)
+        if new_data and feed is not None:
+            orderbook_data, data_last_modified = new_data, modified
+            update_count += 1
+        book, count = orderbook_data, update_count
+        book_key = [feed_started, data_last_modified]
 
-    book = orderbook_data
+        # This browser already shows this book for this order: send the feed state and the
+        # ages, not the ladder, tiles and charts again. Keyed per browser, since each tab
+        # paints alone.
+        key = (["no book", meta.get("symbol"), meta.get("exchange")] if not book else
+               book_key + [quantity, volatility, fee_tier, side, order_type])
+        r = None
+        if book and key != painted:
+            quantity = float(quantity or 0) or 1.0
+            r = compute(book, quantity, float(volatility or 0.01), fee_tier, side, order_type)
+            calc_latency_us.append(r["elapsed_us"])
+            latency = list(calc_latency_us)
+
     freshness, banner = book_freshness(book, state)
-    banner_class = "banner" if freshness in ("fresh", "none") else f"banner show {freshness}"
-    kpis_class = "kpis" if freshness in ("fresh", "none") else f"kpis {freshness}"
-    ladder_class = "" if freshness in ("fresh", "none") else freshness
-    grid_class = "grid" if freshness in ("fresh", "none") else f"grid {freshness}"
-    feed_meta = f"Update #{update_count} · {datetime.now().strftime('%H:%M:%S')}"
-    clock = {"feed-pill.className": pill, "feed-label.children": label, "status-display.children": detail,
-             "update-time.children": feed_meta, "data-banner.children": banner,
-             "data-banner.className": banner_class, "kpis.className": kpis_class,
-             "ladder-wrap.className": ladder_class, "grid.className": grid_class, "feed-line.data": line}
-    if not book:
-        key = ["no book", meta.get("symbol"), meta.get("exchange")]
-        if key == painted:
-            return paint_only({**clock, "painted.data": key})
-        blank = "—"
-        return (pill, label, detail, feed_meta, meta.get("symbol", "—"), meta.get("exchange") or "—",
-                blank, blank, blank, blank, "stat-value", blank,
-                blank, "", blank, "", blank, "", blank, "", blank, "", blank, "",
-                [], [], html.Span("No book yet", className="muted"), "", "", "No data",
-                banner, banner_class, kpis_class, ladder_class, grid_class,
-                empty_figure(), empty_figure("No samples"), empty_figure(), line, key)
-
-    # Age of what is on screen, measured from when we received the book. The exchange
-    # timestamp is kept in the raw panel; exchange clocks drift and would make this lie.
-    age_s = max(0.0, time.time() - float(book.get("local_time") or time.time()))
-    # This browser already shows this book for this order: send the feed state and the ages,
-    # not the ladder, tiles and charts again. Keyed per browser, since each tab paints alone.
-    key = [feed_started, data_last_modified, quantity, volatility, fee_tier, side, order_type]
+    shaded = freshness not in ("fresh", "none")
+    clock = {
+        "feed-pill.className": f"pill {state}", "feed-label.children": label, "status-display.children": detail,
+        "update-time.children": f"Update #{count} · {datetime.now().strftime('%H:%M:%S')}",
+        "data-banner.children": banner,
+        "data-banner.className": f"banner show {freshness}" if shaded else "banner",
+        "kpis.className": f"kpis {freshness}" if shaded else "kpis",
+        "ladder-wrap.className": freshness if shaded else "",
+        "grid.className": f"grid {freshness}" if shaded else "grid",
+        "feed-line.data": line, "painted.data": key,
+    }
+    if book:
+        # Age of what is on screen, measured from when we received the book. The exchange
+        # timestamp is kept in the raw panel; exchange clocks drift and would make this lie.
+        clock["hdr-age.children"] = age_str(max(0.0, time.time() - float(book.get("local_time") or time.time())))
     if key == painted:
-        return paint_only({**clock, "hdr-age.children": age_str(age_s), "painted.data": key})
+        return paint_only(clock)
 
-    quantity = float(quantity or 0) or 1.0
-    volatility = float(volatility or 0.01)
-    r = compute(book, quantity, volatility, fee_tier, side or "buy", order_type)
-    calc_latency_us.append(r["elapsed_us"])
+    if not book:
+        blank = "—"
+        return paint_all({
+            **clock, "hdr-symbol.children": meta.get("symbol", blank), "hdr-venue.children": meta.get("exchange") or blank,
+            "hdr-mid.children": blank, "hdr-spread.children": blank, "hdr-micro.children": blank,
+            "hdr-imb.children": blank, "hdr-imb.className": "stat-value", "hdr-age.children": blank,
+            **{f"{tile}-value.children": blank for tile in TILES}, **{f"{tile}-sub.children": "" for tile in TILES},
+            "asks-table.children": [], "bids-table.children": [],
+            "spread-row.children": html.Span("No book yet", className="muted"),
+            "ladder-note.children": "", "ladder-depth-note.children": "", "debug-info.children": "No data",
+            "depth-chart.figure": empty_figure(), "latency-chart.figure": empty_figure("No samples"),
+            "cost-breakdown-chart.figure": empty_figure(),
+        })
+
     s, fill = r["stats"], r["fill"]
     dp = price_decimals(s["mid"])
-
-    lat = np.asarray(calc_latency_us)
-
+    lat = np.asarray(latency)
 
     levels_hit = fill["levels"] if fill else 0
     ladder_note = ""
@@ -922,7 +975,6 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
     bids_levels = [(float(p), float(q)) for p, q in book["bids"]]
     max_cum = max(sum(p * q for p, q in asks_levels[:LADDER_LEVELS]),
                   sum(p * q for p, q in bids_levels[:LADDER_LEVELS]), 1.0)
-    side = side or "buy"
     asks = build_ladder(asks_levels, "asks", levels_hit if side == "buy" else 0, max_cum)
     bids = build_ladder(bids_levels, "bids", levels_hit if side == "sell" else 0, max_cum)
     spread_row = [html.Span(f"{s['mid']:,.{dp}f}", className="spread-mid"),
@@ -931,30 +983,31 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
     imb_class = "stat-value pos" if s["imbalance"] > 0.1 else "stat-value neg" if s["imbalance"] < -0.1 else "stat-value"
     maker_pct = r["maker"] * 100
 
-    return (
-        pill, label, detail, feed_meta,
-        book.get("symbol") or meta.get("symbol", "—"),
-        book.get("source") or meta.get("exchange") or "—",
-        f"{s['mid']:,.{dp}f}",
-        f"{s['spread_bps']:.2f} bps",
-        f"{s['microprice']:,.{dp}f}",
-        f"{s['imbalance']:+.2f}", imb_class,
-        age_str(age_s),
-        usd(r["net"]), bps(r["net"], quantity),
-        usd(r["slippage"]), f"{bps(r['slippage'], quantity)} · {levels_hit} lvl",
-        usd(r["impact"]), bps(r["impact"], quantity),
-        usd(r["fees"]), f"{bps(r['fees'], quantity)} · {fee_tier}",
-        f"{maker_pct:.0f} / {100 - maker_pct:.0f}", "market orders always take" if order_type == "Market" else "est. passive fill",
-        f"{r['elapsed_us']:,.0f}µs", f"p50 {np.percentile(lat, 50):,.0f} · p99 {np.percentile(lat, 99):,.0f}µs",
-        asks, bids, spread_row, ladder_note, depth_note,
-        raw_book_text(book),
-        banner, banner_class, kpis_class, ladder_class, grid_class,
-        create_orderbook_depth_chart(book, fill=fill, dp=dp),
-        create_latency_time_series(list(calc_latency_us)),
-        create_transaction_cost_breakdown(r["slippage"], r["fees"], r["impact"], quantity=quantity),
-        line, key,
-    )
-
+    return paint_all({
+        **clock,
+        "hdr-symbol.children": book.get("symbol") or meta.get("symbol", "—"),
+        "hdr-venue.children": book.get("source") or meta.get("exchange") or "—",
+        "hdr-mid.children": f"{s['mid']:,.{dp}f}",
+        "hdr-spread.children": f"{s['spread_bps']:.2f} bps",
+        "hdr-micro.children": f"{s['microprice']:,.{dp}f}",
+        "hdr-imb.children": f"{s['imbalance']:+.2f}", "hdr-imb.className": imb_class,
+        "netcost-value.children": usd(r["net"]), "netcost-sub.children": bps(r["net"], quantity),
+        "slippage-value.children": usd(r["slippage"]),
+        "slippage-sub.children": f"{bps(r['slippage'], quantity)} · {levels_hit} lvl",
+        "impact-value.children": usd(r["impact"]), "impact-sub.children": bps(r["impact"], quantity),
+        "fees-value.children": usd(r["fees"]), "fees-sub.children": f"{bps(r['fees'], quantity)} · {fee_tier}",
+        "makertaker-value.children": f"{maker_pct:.0f} / {100 - maker_pct:.0f}",
+        "makertaker-sub.children": "market orders always take" if order_type == "Market" else "est. passive fill",
+        "latency-value.children": f"{r['elapsed_us']:,.0f}µs",
+        "latency-sub.children": f"p50 {np.percentile(lat, 50):,.0f} · p99 {np.percentile(lat, 99):,.0f}µs",
+        "asks-table.children": asks, "bids-table.children": bids, "spread-row.children": spread_row,
+        "ladder-note.children": ladder_note, "ladder-depth-note.children": depth_note,
+        "debug-info.children": raw_book_text(book),
+        "depth-chart.figure": create_orderbook_depth_chart(book, fill=fill, dp=dp),
+        "latency-chart.figure": create_latency_time_series(latency),
+        "cost-breakdown-chart.figure": create_transaction_cost_breakdown(r["slippage"], r["fees"], r["impact"],
+                                                                         quantity=quantity),
+    })
 
 @app.callback(
     Output("gemini-analysis", "children"),
