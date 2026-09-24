@@ -539,3 +539,14 @@ def test_app_adapter_completes_a_live_request_and_spaces_out_clicks():
     assert first["success"] and first["source"] == "gemini", first
     second = analyzer.analyze(DEEP, 1_000, side="buy")
     assert not second["success"] and "Rate limited" in second["analysis"]
+
+
+def test_app_adapter_gives_each_request_its_own_conversation():
+    """Two callbacks in flight must not share one transport's message history."""
+    pytest.importorskip("google.genai")
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = _client([]), ["m"], "m", 0
+    first = analyzer._transport("buy", 1_000, "Market")
+    second = analyzer._transport("buy", 1_000, "Market")
+    assert first is not second
