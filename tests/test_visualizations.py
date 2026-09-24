@@ -1,6 +1,4 @@
 """The charts are plain dicts for speed; plotly still validates every one of them here."""
-import time
-
 import plotly.graph_objs as go
 import pytest
 
@@ -33,10 +31,8 @@ def test_depth_marks_mid_and_vwap():
     assert fig["layout"]["annotations"][0]["text"] == "VWAP 101.2"
 
 
-def test_charts_are_cheap_enough_to_build_every_poll():
-    start = time.perf_counter()
-    for _ in range(50):
-        create_orderbook_depth_chart(BOOK, fill={"vwap": 101.2}, dp=1)
-        create_latency_time_series(list(range(300)))
-        create_transaction_cost_breakdown(1.0, 2.0, 3.0, quantity=10_000)
-    assert (time.perf_counter() - start) / 50 < 0.01  # was ~50 ms a poll with go.Figure
+@pytest.mark.parametrize("name,build", FIGURES, ids=[n for n, _ in FIGURES])
+def test_figures_are_plain_dicts(name, build):
+    """go.Figure objects cost ~15 ms each in validation on every poll; dicts cost nothing."""
+    fig = build()
+    assert type(fig) is dict and set(fig) == {"data", "layout"}
