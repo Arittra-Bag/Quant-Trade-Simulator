@@ -63,7 +63,7 @@ The Gemini integration:
 - **Budget**: at most 2 revisions, and none once the run is 45 s old; a plan still blocked then reaches the approver marked unresolved.
 - **Approval**: refused if more than 120 s after planning. The checkpointer keeps the last 32 runs; an older or restart-lost run reports that it expired.
 - **Paper execution** (`agent/execution.py`): each child order walks the latest book from the feed. Slices go 0.25 s apart, not over the advised horizon. A passive limit is filled at its expected value: the queue model's maker share fills at the touch and the rest crosses. The reported cost is implementation shortfall against the arrival mid, fees included, in bps of the filled notional; permanent impact cannot be observed on a paper fill.
-- **Known gap**: `quote_order` prices a resting limit as if it crossed the spread, while the paper fill does not, so a passive plan tends to fill well under its quoted cost. `validation/posttrade.py` scores both against a recorded tape.
+- **Known gap**: the paper fill for a resting limit ignores adverse selection, so it comes in 1.7 to 4.2 bps under what a recorded tape says the order would have cost; `quote_order`'s Limit price, which charges the spread, is the closer estimate (validation/POSTTRADE.md).
 
 ### Post-trade scoring
 `python -m validation.posttrade <recording>` replays the agent's plans over a recording from `validation/record.py`, in non-overlapping windows (default: $250k, 60 s, 4 slices, both sides):
@@ -154,6 +154,7 @@ Ranked roughly by how much each would change the numbers:
    replay fixtures; the live models were run once each (evals/RESULTS.md).
 6. **Polling, not push.** The browser asks for the next update when the last one has landed,
    rather than being driven by book updates.
-7. **A resting limit is quoted as if it crossed the spread.** `quote_order` changes only the
-   maker probability for a Limit order. `python -m validation.posttrade` measures the gap against
-   a recorded tape (see below).
+7. **The agent's paper fill for a resting limit is optimistic.** It fills the queue model's
+   maker share at the touch and ignores adverse selection; against a recorded tape it was 1.7
+   to 4.2 bps cheaper than realised (validation/POSTTRADE.md). `quote_order`'s Limit price, which
+   charges the spread, landed within 0 to 1.7 bps of the realised mean, so it stays as it is.
