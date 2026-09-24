@@ -198,9 +198,11 @@ button:focus-visible, summary:focus-visible, [role="button"]:focus-visible {
 .banner.stale { color: var(--accent); background: rgba(255, 176, 0, .08); border-bottom-color: rgba(255, 176, 0, .3); }
 .banner.frozen { color: var(--text-2); background: var(--panel-2); }
 .banner::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+/* Old numbers stay fully readable; a light desaturation plus the banner says they are not live. */
 .kpis.stale, .kpis.frozen, #ladder-wrap.stale, #ladder-wrap.frozen,
-.grid.stale .col-center .graph, .grid.frozen .col-center .graph { opacity: .55; }
-.kpis.stale .kpi.primary .kpi-value, .kpis.frozen .kpi.primary .kpi-value { color: var(--text-2); }
+.grid.stale .col-center .graph, .grid.frozen .col-center .graph {
+  filter: saturate(.6); opacity: .92; transition: filter .2s, opacity .2s;
+}
 .ladder-foot { padding: 6px 6px 0; font-size: 10px; color: var(--accent); line-height: 1.35; }
 .ladder-foot:empty { display: none; }
 
