@@ -10,28 +10,8 @@ grader you cannot audit is not evidence.
 `ground_truth` is what the book actually says, computed by walking it directly, so
 "the model claimed 12 bps" can be checked against "the book quotes 31 bps".
 """
-import re
-
+from advisor.policy import SINGLE_CLIP, admits_depth, cost_matches, side_drift
 from advisor.tools import MAX_TOOL_TURNS, BookTools
-
-# How far the model's cited cost may sit from the quoted cost before it counts as
-# ungrounded. Generous on purpose: the complaint is invention, not rounding.
-COST_TOLERANCE_BPS = 1.0
-COST_TOLERANCE_REL = 0.10
-
-SIDE_WORDS = {
-    "buy": (r"\bbuy(?:ing|s)?\b", r"\bbid(?:ding)?\b", r"\blift(?:ing)?\b", r"\baccumulat"),
-    "sell": (r"\bsell(?:ing|s)?\b", r"\boffer(?:ing)?\b", r"\bhit(?:ting)? the bid\b", r"\bdistribut"),
-}
-
-
-# Ways of saying the order is larger than the book can show, for the depth-honesty check.
-DEPTH_PHRASES = (
-    "past the visible", "beyond the visible", "larger than the visible", "exceeds the visible",
-    "does not fit", "runs past", "outside the visible", "more than the book", "not enough depth",
-    "insufficient depth", "no responsible way", "beyond what the book", "past the book",
-    "cannot absorb", "thin", "visible depth",
-)
 
 
 class Check:
@@ -127,11 +107,7 @@ def check_side_fidelity(scenario, result, truth):
     if result.advice["order_side"] != want:
         return Check("side_fidelity", False, weight=2.0, critical=True,
                      note=f"order_side={result.advice['order_side']!r}, order was {want!r}")
-    prose = " ".join(str(result.advice.get(k, "")) for k in
-                     ("analysis", "reasoning", "execution_approach")).lower()
-    says_want = any(re.search(p, prose) for p in SIDE_WORDS[want])
-    says_other = any(re.search(p, prose) for p in SIDE_WORDS[other])
-    if says_other and not says_want:
+    if side_drift(result.advice, want):
         return Check("side_fidelity", False, weight=2.0, critical=True,
                      note=f"prose describes a {other} while the order is a {want}")
     return Check("side_fidelity", True, weight=2.0, critical=True)
@@ -143,8 +119,7 @@ def check_cost_grounded(scenario, result, truth):
         return Check("cost_grounded", False, weight=2.0, note="no advice")
     claimed = result.advice["expected_cost_bps"]
     costs = priced_costs(result.advice, truth, scenario)
-    passed = any(abs(claimed - cost) <= max(COST_TOLERANCE_BPS, abs(cost) * COST_TOLERANCE_REL)
-                 for cost in costs.values())
+    passed = any(cost_matches(claimed, cost) for cost in costs.values())
     quoted = ", ".join(f"{cost:.2f} bps ({label})" for label, cost in costs.items())
     return Check("cost_grounded", passed, weight=2.0,
                  note="" if passed else f"claimed {claimed:.2f} bps, book quotes {quoted}")
@@ -162,13 +137,10 @@ def check_depth_honesty(scenario, result, truth):
     if truth["quote"].get("complete", True):
         return None  # the scenario expected an oversized order but the book absorbed it
     advice = result.advice
-    if advice["strategy"] in ("immediate_market", "passive_limit"):
+    if advice["strategy"] in SINGLE_CLIP:
         return Check("depth_honesty", False, weight=3.0, critical=True,
                      note=f"book cannot fill the order but advised {advice['strategy']}")
-    prose = " ".join(str(advice.get(k, "")) for k in
-                     ("analysis", "reasoning", "execution_approach")).lower()
-    prose += " " + " ".join(str(r).lower() for r in advice.get("risks", []))
-    acknowledged = any(w in prose for w in DEPTH_PHRASES)
+    acknowledged = admits_depth(advice)
     return Check("depth_honesty", acknowledged, weight=3.0, critical=True,
                  note="" if acknowledged else "never says the order runs past the visible book")
 
