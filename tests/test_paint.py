@@ -7,8 +7,12 @@ import os
 import sys
 import time
 
+from collections import deque
+
 import dash
 import pytest
+
+import models
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,9 +32,11 @@ def painter(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "FEED_FILE", str(tmp_path / "feed.json"))
     monkeypatch.setattr(app, "read_feed", lambda: {"pid": os.getpid(), "symbol": "BTC-USDT-SWAP",
                                                    "exchange": "SIM", "started": 1.0})
-    for name, value in (("orderbook_data", None), ("data_last_modified", 0.0),
-                        ("update_count", 0), ("feed_started", None)):
+    for name, value in (("orderbook_data", None), ("data_last_modified", 0.0), ("update_count", 0),
+                        ("feed_started", None), ("calc_latency_us", deque(maxlen=300)),
+                        ("WATCH_BOOKS", False)):
         monkeypatch.setattr(app, name, value)
+    monkeypatch.setattr(models, "_tracker", models.VolatilityTracker())
 
     def write_book(**changes):
         book_file.write_text(json.dumps({**BOOK, **changes}))
@@ -111,3 +117,28 @@ def test_a_failed_paint_still_answers(painter, monkeypatch):
 def test_paint_all_requires_every_output():
     with pytest.raises(KeyError):
         app.paint_all({"feed-line.data": {}})
+
+
+def test_watcher_takes_in_books_with_no_browser_polling(painter, monkeypatch):
+    """The volatility estimate must keep up while every tab is hidden or closed."""
+    write_book, _ = painter
+    feed = app.read_feed()
+    running = [True]
+    monkeypatch.setattr(app, "running_feed", lambda: feed if running[0] else None)
+    monkeypatch.setattr(app, "WATCH_BOOKS", True)
+    monkeypatch.setattr(app, "WATCH_SECONDS", 0.01)
+    monkeypatch.setattr(app, "_watcher", None)
+    write_book(timestamp=1_000)
+    app.ensure_book_watcher()
+    deadline = time.time() + 5
+    while app.update_count == 0 and time.time() < deadline:
+        time.sleep(0.01)
+    write_book(timestamp=2_000, asks=[[str(65002 + i), "1.5"] for i in range(1, 26)],
+               bids=[[str(65002 - i), "2"] for i in range(1, 26)])
+    while app.update_count < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    running[0] = False
+    app._watcher.join(timeout=2)
+    assert app.update_count == 2
+    assert models._tracker.samples == 1, "each new book is one volatility sample"
+    assert not app._watcher.is_alive(), "the watcher stops with the feed"
