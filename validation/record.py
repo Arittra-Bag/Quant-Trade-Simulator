@@ -14,27 +14,24 @@ the live feed does.
 Usage:
     python -m validation.record --symbol BTC-USDT-SWAP --minutes 10 --out validation/data/okx.jsonl
 
-On a python.org build for macOS, point SSL_CERT_FILE at certifi first
-(`export SSL_CERT_FILE=$(python -m certifi)`) or every request fails to verify.
+A python.org build for macOS cannot verify OKX's certificate out of the box; requests
+then retry against certifi's bundle (see websocket_client.get_json). The recorder stops
+after MAX_FAILURES failed polls in a row instead of writing an empty file for the whole run.
 """
 import argparse
 import json
 import os
 import time
-import urllib.request
+
+from websocket_client import USER_AGENT, get_json  # noqa: F401  (USER_AGENT: what OKX sees)
 
 OKX_REST = "https://www.okx.com/api/v5"
 BOOK_DEPTH = 25
-
-# OKX answers urllib's default "Python-urllib/3.x" agent with 403, which made the
-# recorder write an empty file and look like a quiet market rather than a failure.
-USER_AGENT = "quant-trade-simulator/1.0"
+MAX_FAILURES = 10
 
 
 def _get(url, timeout=10):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    return get_json(url, timeout=timeout)
 
 
 def contract_value(symbol):
@@ -69,7 +66,7 @@ def fetch_trades(symbol, ct_val, seen):
 def record(symbol="BTC-USDT-SWAP", minutes=10.0, interval=0.5, out="validation/data/okx.jsonl"):
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     ct_val = contract_value(symbol)
-    seen, deadline, books, trades = set(), time.time() + minutes * 60, 0, 0
+    seen, deadline, books, trades, failures = set(), time.time() + minutes * 60, 0, 0, 0
     with open(out, "w") as fh:
         while time.time() < deadline:
             try:
@@ -79,14 +76,18 @@ def record(symbol="BTC-USDT-SWAP", minutes=10.0, interval=0.5, out="validation/d
                     fh.write(json.dumps(tr) + "\n")
                     trades += 1
                 fh.flush()
+                failures = 0
             except Exception as e:                      # keep recording through a blip
+                failures += 1
                 print(f"record error: {e}")
+                if failures >= MAX_FAILURES:
+                    raise SystemExit(f"stopped: {failures} requests in a row failed, last with {e}. "
+                                     "Check network access to OKX.")
             time.sleep(interval)
     print(f"wrote {books} books and {trades} trades to {out}")
     if not books:
         raise SystemExit(
-            "recorded nothing: every request failed. Check network access to OKX, and on "
-            "macOS python.org builds set SSL_CERT_FILE=$(python -m certifi).")
+            "recorded nothing: every request failed. Check network access to OKX.")
     return out
 
 
