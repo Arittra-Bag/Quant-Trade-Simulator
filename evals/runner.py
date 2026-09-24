@@ -4,11 +4,15 @@ Eval runner.
     python -m evals.runner                     # every candidate, every scenario, offline
     python -m evals.runner --candidates rules
     python -m evals.runner --markdown evals/RESULTS.md --json evals/results.json
-    python -m evals.runner --live              # adds the real Gemini transport, needs a key
+    python -m evals.runner --live              # adds every live model whose key is set
+    python -m evals.runner --live claude_haiku,gemini_flash --max-usd 0.50
 
 Offline is the default and needs no API key and no network: the replay candidates play
 recorded scripts and the `rules` candidate is plain Python over the project's own cost
-models. That is what CI runs. `--live` is the only path that touches the API.
+models. That is what CI runs. `--live` is the only path that touches an API: Gemini through
+GEMINI_API_KEY, Claude through ANTHROPIC_API_KEY. Each live row records its tokens, and the
+Claude rows their list-price cost; `--max-usd` stops starting Claude scenarios once that much
+has been spent.
 
 Exit code is 1 when a candidate the harness treats as real regresses below its floor, so
 this can gate a merge. The replay candidates are expected to fail their target graders,
@@ -23,6 +27,11 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv  # noqa: E402
+
+# Before the settings below are read, so a local .env sets them as well as the API keys.
+load_dotenv()
+
 from advisor.advisor import run_advisor  # noqa: E402
 from evals.candidates import CANDIDATES, DESCRIPTIONS, REAL_CANDIDATES  # noqa: E402
 from evals.graders import grade, ground_truth  # noqa: E402
@@ -31,13 +40,27 @@ from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
 # A real candidate scoring below this is a regression worth failing CI over.
 SCORE_FLOOR = 0.90
 
-# Live runs are built for the Gemini free tier: 5 calls a minute per model.
-# Seconds between live API calls, which keeps a run under that limit.
-LIVE_CALL_INTERVAL = float(os.environ.get("GEMINI_CALL_INTERVAL", "13"))
+# Seconds between live API calls. The key is on the paid tier, so this only smooths bursts;
+# set it to 13 to stay under the free tier's 5 calls a minute.
+LIVE_CALL_INTERVAL = float(os.environ.get("GEMINI_CALL_INTERVAL", "1"))
 # Seconds before one API call is abandoned, so an unanswered call cannot hang the run.
 LIVE_CALL_TIMEOUT = float(os.environ.get("GEMINI_CALL_TIMEOUT", "60"))
-# Seconds a whole live run may take. Scenarios not started by then are marked errored.
+# Seconds one live candidate may take. Scenarios not started by then are marked errored.
 LIVE_RUN_BUDGET = float(os.environ.get("GEMINI_RUN_BUDGET", "900"))
+# USD a whole live run may spend on Claude, at list price, before it stops starting scenarios.
+LIVE_MAX_USD = 1.00
+
+# Live candidates: one model each, no fallback, so a row measures exactly that model.
+LIVE_CANDIDATES = {
+    "gemini_flash": ("gemini", "gemini-3.8-flash", {}),
+    "gemini_lite": ("gemini", "gemini-3.5-flash-lite", {}),
+    "claude_haiku": ("claude", "claude-haiku-4-5", {}),
+    "claude_sonnet": ("claude", "claude-sonnet-5", {"effort": "low"}),
+}
+LIVE_DESCRIPTIONS = {
+    name: f"Live `{model}`{' at effort ' + kw['effort'] if kw.get('effort') else ''} through the tool-calling loop."
+    for name, (_, model, kw) in LIVE_CANDIDATES.items()
+}
 
 
 def _fill_quote_placeholder(transport, scenario, book):
@@ -82,47 +105,82 @@ def run_one(candidate_name, scenario, live_transport=None):
         "models_used": result.models_used,
         "errored": result.upstream_error,
         "errors": result.errors,
+        "tokens_in": sum(transport_usage(live_transport).get(k, 0) for k in
+                         ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+        "tokens_out": transport_usage(live_transport).get("output_tokens", 0),
+        "cost_usd": getattr(live_transport, "cost_usd", None),
     }
+
+
+def transport_usage(transport):
+    """Token totals of the transport's last request, or {} for offline candidates."""
+    return dict(getattr(transport, "usage", None) or {})
 
 
 def _skipped(name, scenario, reason):
     return {"candidate": name, "scenario": scenario["id"], "score": 0.0, "critical_failures": [],
             "checks": [], "advice": None, "tool_calls": [], "turns": 0, "latency_ms": 0.0,
-            "model": "", "models_used": [], "errored": True, "errors": [reason]}
+            "model": "", "models_used": [], "errored": True, "errors": [reason],
+            "tokens_in": 0, "tokens_out": 0, "cost_usd": None}
 
 
-def run_suite(candidate_names, live=False, on_row=None):
-    """Run every candidate on every scenario. `on_row` is called with each row as it lands."""
-    rows, live_transport_factory = [], None
-    if live:
-        live_transport_factory = _live_transport_factory()
-        if live_transport_factory:
-            candidate_names = list(candidate_names) + ["gemini_live"]
-        else:
-            print("No GEMINI_API_KEY; skipping the live candidate.", file=sys.stderr)
-
+def run_suite(candidate_names, live=(), on_row=None, max_usd=LIVE_MAX_USD):
+    """
+    Run every candidate on every scenario, then each live candidate named in `live`.
+    `on_row` is called with all rows so far each time one lands. Claude scenarios stop being
+    started once the run has spent `max_usd`.
+    """
+    rows, spent = [], 0.0
     for name in candidate_names:
-        live_run = name == "gemini_live"
-        # One live transport for the whole run, so call pacing carries across scenarios.
-        transport = live_transport_factory() if live_run else None
-        started = time.time()
-        for i, scenario in enumerate(SCENARIOS, 1):
-            if live_run and time.time() - started > LIVE_RUN_BUDGET:
-                row = _skipped(name, scenario, f"not run: the {LIVE_RUN_BUDGET:.0f}s run budget was spent")
-            else:
-                row = run_one(name, scenario, live_transport=transport)
-            rows.append(row)
-            if live_run:
-                state = "errored" if row["errored"] else f"{row['score'] * 100:.0f}%"
-                print(f"[{i}/{len(SCENARIOS)}] gemini_live {scenario['id']}: {state} "
-                      f"({row['latency_ms'] / 1000:.0f}s)", file=sys.stderr, flush=True)
+        for scenario in SCENARIOS:
+            rows.append(run_one(name, scenario))
             if on_row:
                 on_row(rows)
+
+    for name in live:
+        factory = _live_transport_factory(name)
+        if factory is None:
+            print(f"{name}: no API key set, skipped.", file=sys.stderr)
+            continue
+        # One transport per candidate, so call pacing carries across scenarios.
+        transport, started = factory(), time.time()
+        for i, scenario in enumerate(SCENARIOS, 1):
+            if time.time() - started > LIVE_RUN_BUDGET:
+                row = _skipped(name, scenario, f"not run: the {LIVE_RUN_BUDGET:.0f}s run budget was spent")
+            elif LIVE_CANDIDATES[name][0] == "claude" and spent >= max_usd:  # the cap is Claude's
+                row = _skipped(name, scenario, f"not run: the ${max_usd:.2f} spend cap was reached")
+            else:
+                if hasattr(transport, "budget_usd"):
+                    transport.budget_usd = max_usd - spent  # checked before every call, not just here
+                row = run_one(name, scenario, live_transport=transport)
+                spent += row["cost_usd"] or 0.0
+            rows.append(row)
+            state = "errored" if row["errored"] else f"{row['score'] * 100:.0f}%"
+            cost = f", ${row['cost_usd']:.4f}" if row["cost_usd"] is not None else ""
+            print(f"[{i}/{len(SCENARIOS)}] {name} {scenario['id']}: {state} "
+                  f"({row['latency_ms'] / 1000:.0f}s, {row['tokens_in']}+{row['tokens_out']} tok{cost})",
+                  file=sys.stderr, flush=True)
+            if on_row:
+                on_row(rows)
+    if spent:
+        print(f"Claude spend this run: ${spent:.4f} (list price)", file=sys.stderr)
     return rows
 
 
-def _live_transport_factory():
-    """Build a factory for the real Gemini transport, or None when no key is configured."""
+def _live_transport_factory(name):
+    """A factory for live candidate `name`'s transport, or None when its API key is not set."""
+    provider, model, options = LIVE_CANDIDATES[name]
+    if provider == "claude":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            return None
+        try:
+            import anthropic
+        except ImportError:  # a dev dependency: pip install -r requirements-dev.txt
+            print(f"{name}: the anthropic package is not installed.", file=sys.stderr)
+            return None
+        from advisor.claude_transport import ClaudeTransport
+        client = anthropic.Anthropic(timeout=LIVE_CALL_TIMEOUT, max_retries=1)
+        return lambda: ClaudeTransport(client, model, **options)
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         return None
@@ -130,9 +188,7 @@ def _live_transport_factory():
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=int(LIVE_CALL_TIMEOUT * 1000)))
-    from gemini_integration import FALLBACK_MODELS, MODEL  # evaluate the models the app uses
-    models = list(dict.fromkeys([MODEL, *FALLBACK_MODELS]))
-    return lambda: GeminiTransport(client, models, call_interval=LIVE_CALL_INTERVAL)
+    return lambda: GeminiTransport(client, [model], call_interval=LIVE_CALL_INTERVAL)
 
 
 def summarise(rows):
@@ -146,6 +202,12 @@ def summarise(rows):
         entry = by_candidate.setdefault(row["candidate"], {
             "scenarios": 0, "errored": 0, "score_sum": 0.0, "critical": 0, "latency_ms": 0.0,
             "failed_checks": {}})
+        # Spend counts every run that reached the API, errored or not: it was billed either way.
+        if row.get("tokens_in") or row.get("tokens_out"):
+            entry["billed_runs"] = entry.get("billed_runs", 0) + 1
+            entry["tokens"] = entry.get("tokens", 0) + row.get("tokens_in", 0) + row.get("tokens_out", 0)
+            if row.get("cost_usd") is not None:
+                entry["cost_usd"] = entry.get("cost_usd", 0.0) + row["cost_usd"]
         if row.get("errored"):
             entry["errored"] += 1
             continue
@@ -161,6 +223,9 @@ def summarise(rows):
         entry["score"] = round(entry["score_sum"] / n, 4) if entry["scenarios"] else None
         entry["mean_latency_ms"] = round(entry["latency_ms"] / n, 2)
         entry["clean_scenarios"] = entry["scenarios"] - entry["critical"]
+        billed = max(entry.pop("billed_runs", 0), 1)
+        entry["mean_tokens"] = round(entry.pop("tokens", 0) / billed)
+        entry["mean_cost_usd"] = round(entry["cost_usd"] / billed, 5) if "cost_usd" in entry else None
     return by_candidate
 
 
@@ -183,6 +248,10 @@ def _pct(score, width=0):
     return f"{'n/a':>{width}}" if score is None else f"{score * 100:{width}.1f}%"
 
 
+def _latency(ms):
+    return f"{ms / 1000:.1f} s" if ms >= 1000 else f"{ms:.1f} ms"
+
+
 def to_markdown(rows, summary):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     out = [
@@ -194,15 +263,21 @@ def to_markdown(rows, summary):
         "",
         "## Scoreboard",
         "",
-        "| Candidate | Kind | Score | Scenarios without a critical failure | Mean latency | What it is |",
-        "| --- | --- | ---: | ---: | ---: | --- |",
+        "| Candidate | Kind | Score | Scenarios without a critical failure | Mean latency | Tokens per run "
+        "| Cost per run | What it is |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for name, entry in sorted(summary.items(), key=_rank):
-        kind = "measured" if name in REAL_CANDIDATES or name == "gemini_live" else "replay fixture"
+        kind = ("live model" if name in LIVE_CANDIDATES else
+                "measured" if name in REAL_CANDIDATES else "replay fixture")
+        errored = f" ({entry['errored']} errored upstream)" if entry["errored"] else ""
+        tokens = f"{entry['mean_tokens']:,}" if name in LIVE_CANDIDATES else "-"
+        cost = (f"${entry['mean_cost_usd']:.4f}" if entry.get("mean_cost_usd") is not None else
+                "GCP credit" if name in LIVE_CANDIDATES else "-")
         out.append(
             f"| `{name}` | {kind} | {_pct(entry['score'])} | "
-            f"{entry['clean_scenarios']}/{entry['scenarios']} | {entry['mean_latency_ms']:.1f} ms | "
-            f"{DESCRIPTIONS.get(name, 'Live Gemini via the tool-calling loop.')} |"
+            f"{entry['clean_scenarios']}/{entry['scenarios']}{errored} | {_latency(entry['mean_latency_ms'])} | "
+            f"{tokens} | {cost} | {DESCRIPTIONS.get(name) or LIVE_DESCRIPTIONS.get(name, '')} |"
         )
 
     out += ["", "## Which grader caught what", "",
@@ -248,10 +323,7 @@ def to_markdown(rows, summary):
         "- `legacy_prose` is the output contract of the single-prompt path this work replaced, read off "
         "the old prompt: six string fields, no tools, no order side, no cost figure. Its failures are "
         "structural consequences of that contract rather than a judgement about the model behind it.",
-        "- **No row here was produced against the live Gemini API.** There is no key in this repository's "
-        "test or CI environment and the live path has never been exercised. `python -m evals.runner --live` "
-        "adds a `gemini_live` row when `GEMINI_API_KEY` is set; until someone runs it, the tool-calling "
-        "loop against the real API is untested.",
+        *_live_notes(summary),
         "- The books are synthetic ladders from `evals/scenarios.py`, not venue captures. Drop recorded "
         "snapshots into `evals/books/` with the same shape and the scenarios use them instead.",
         "",
@@ -259,13 +331,35 @@ def to_markdown(rows, summary):
     return "\n".join(out)
 
 
+def _live_notes(summary):
+    live = [n for n in summary if n in LIVE_CANDIDATES]
+    if not live:
+        return ["- **No row here was produced against a live model.** CI has no API keys. "
+                "`python -m evals.runner --live` adds a row per model whose key is set."]
+    return [
+        f"- The live rows ({', '.join(f'`{n}`' for n in live)}) are one run of each scenario against the "
+        "real API: a single sample per scenario, so a difference of a few points between models is noise, "
+        "not a ranking. A scenario the provider failed (quota, overload, timeout) is counted as errored "
+        "and left out of the score, because it measured the provider rather than the advisor.",
+        "- Tokens and cost are per run that reached the API, errored runs included, because those were "
+        "billed too. Cost is Claude's list price from each response's token usage, prompt caching included. "
+        "Gemini rows show tokens only; they were billed to Google Cloud credit.",
+        "- Live models are reported, not gated: CI never calls an API, and a model scoring below the "
+        "baseline is a finding rather than a regression.",
+    ]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the advisor eval suite.")
     parser.add_argument("--candidates", default=",".join(CANDIDATES),
                         help="comma-separated candidate names (default: all)")
     parser.add_argument("--scenario", help="run a single scenario by id")
-    parser.add_argument("--live", action="store_true",
-                        help="also run the real Gemini transport; needs GEMINI_API_KEY")
+    parser.add_argument("--live", nargs="?", const="all", default="",
+                        help="also run live models: 'all' (default) or a comma-separated subset of "
+                             + ", ".join(LIVE_CANDIDATES))
+    parser.add_argument("--max-usd", type=float, default=LIVE_MAX_USD,
+                        help=f"stop starting Claude scenarios after this much list-price spend "
+                             f"(default {LIVE_MAX_USD:.2f})")
     parser.add_argument("--json", dest="json_path", help="write the full per-check results here")
     parser.add_argument("--markdown", dest="md_path", help="write the results table here")
     parser.add_argument("--quiet", action="store_true")
@@ -275,13 +369,18 @@ def main(argv=None):
     unknown = [n for n in names if n not in CANDIDATES]
     if unknown:
         parser.error(f"unknown candidate(s): {', '.join(unknown)}")
+    live = (list(LIVE_CANDIDATES) if args.live == "all" else
+            [n.strip() for n in args.live.split(",") if n.strip()])
+    unknown = [n for n in live if n not in LIVE_CANDIDATES]
+    if unknown:
+        parser.error(f"unknown live candidate(s): {', '.join(unknown)}")
 
     global SCENARIOS
     if args.scenario:
         from evals.scenarios import get_scenario
         SCENARIOS = [get_scenario(args.scenario)]
 
-    if args.live and not args.json_path:
+    if live and not args.json_path:
         # A live run costs money and is hard to repeat; always keep the raw rows.
         args.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
 
@@ -295,10 +394,11 @@ def main(argv=None):
                            "summary": summarise(rows), "rows": rows}, fh, indent=2)
             os.replace(tmp, args.json_path)
 
-    if args.live:
-        print(f"Live run: {len(SCENARIOS)} scenarios, calls {LIVE_CALL_INTERVAL:.0f}s apart for the free tier, "
-              f"stops starting new scenarios after {LIVE_RUN_BUDGET / 60:.0f} min.", file=sys.stderr, flush=True)
-    rows = run_suite(names, live=args.live, on_row=save if args.live else None)
+    if live:
+        print(f"Live run: {', '.join(live)} on {len(SCENARIOS)} scenarios; Claude spend capped at "
+              f"${args.max_usd:.2f}, each model stops after {LIVE_RUN_BUDGET / 60:.0f} min.",
+              file=sys.stderr, flush=True)
+    rows = run_suite(names, live=live, on_row=save if live else None, max_usd=args.max_usd)
     summary = summarise(rows)
     save(rows)
     if args.md_path:
@@ -313,18 +413,14 @@ def main(argv=None):
             print(f"{name:<{width}}  {_pct(entry['score'], 5)}  "
                   f"{entry['clean_scenarios']}/{entry['scenarios']}    {entry['mean_latency_ms']:7.1f} ms{errored}")
 
-    live = [r for r in rows if r["candidate"] == "gemini_live"]
-    for row in live:
-        if row["errors"]:
+    for row in rows:
+        if row["candidate"] in LIVE_CANDIDATES and row["errors"]:
             kind = "errored" if row["errored"] else "failed"
-            print(f"gemini_live {row['scenario']} {kind}: {row['errors'][0]}", file=sys.stderr)
-    if live:
-        used = sorted({m for r in live for m in r.get("models_used", [])})
-        print(f"gemini_live answered by: {', '.join(used) or 'no model'}", file=sys.stderr)
-    if args.live and args.json_path:
+            print(f"{row['candidate']} {row['scenario']} {kind}: {row['errors'][0]}", file=sys.stderr)
+    if live and args.json_path:
         print(f"full results in {args.json_path}", file=sys.stderr)
 
-    real = [n for n in summary if n in REAL_CANDIDATES or n == "gemini_live"]
+    real = [n for n in summary if n in REAL_CANDIDATES]  # live models are reported, not gated
     unmeasured = [n for n in real if summary[n]["score"] is None]
     regressed = [n for n in real if summary[n]["score"] is not None and summary[n]["score"] < SCORE_FLOOR]
     if unmeasured:

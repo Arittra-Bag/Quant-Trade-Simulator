@@ -72,8 +72,9 @@ Optional, for the AI panel, create a `.env` (never committed):
 
 ```
 GEMINI_API_KEY=your_key_here
-# GEMINI_MODEL=gemini-3.5-flash-lite           # default: 15 req/min, 500/day on the free tier
-# GEMINI_FALLBACK_MODELS=gemini-3.8-flash       # tried if the default is retired, busy or out of quota
+# GEMINI_MODEL=gemini-3.8-flash                 # default; on the free tier use gemini-3.5-flash-lite
+# GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite  # tried if the default is retired, busy or out of quota
+# GEMINI_DAILY_REQUESTS=150                     # advisor requests per UTC day before the rules answer
 ```
 
 The feed client also runs standalone, writing `latest_orderbook.json` and `feed_status.json`:
@@ -131,11 +132,12 @@ the desk is built to stay responsive on both:
   compressed JS bundles are cached, not rebuilt for every visitor.
 - **Threaded worker.** Start, Stop and the advisor never wait behind the polls.
 - **Advisor quota.** Generate is locked while a request is running and requests are spaced
-  at least 5 s apart. Flash Lite leads (500 requests a day free, against 20 for 3.8 Flash).
+  at least 5 s apart. The demo key is on the paid tier, so 3.8 Flash leads and Flash Lite is
+  the fallback, and a daily cap (150 requests by default) keeps a public page from running up a bill.
   A model that fails is rested instead of being tried first on every call: until midnight
   Pacific for a spent daily quota, for Google's retry delay (or 60 s) for a per-minute quota,
-  and 30 s when overloaded or timed out. A click has a 40 s budget. When Gemini cannot answer, the panel gives the rules-based read and says
-  why, rather than an error.
+  and 30 s when overloaded or timed out. A click has a 40 s budget. When Gemini cannot answer,
+  the panel gives the rules-based read and says why, rather than an error.
 
 ## Notes
 

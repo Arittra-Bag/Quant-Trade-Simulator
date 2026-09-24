@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from advisor.advisor import (GeminiTransport, ModelCooldown, ReplayTransport, RuleTransport,  # noqa: E402
+from advisor.advisor import (GeminiTransport, ModelCooldown, RateLimited, ReplayTransport, RuleTransport,  # noqa: E402
                              run_advisor)
 from advisor.schema import STRATEGIES, strategy_label, validate_advice  # noqa: E402
 from advisor.tools import MAX_TOOL_TURNS, TOOL_DECLARATIONS, BookTools  # noqa: E402
@@ -410,12 +410,12 @@ def test_a_call_that_times_out_is_errored_not_scored():
 def test_a_live_run_stops_starting_scenarios_when_its_budget_is_spent(monkeypatch):
     import evals.runner as runner
     monkeypatch.setattr(runner, "LIVE_RUN_BUDGET", -1)
-    monkeypatch.setattr(runner, "_live_transport_factory", lambda: lambda: ReplayTransport([]))
+    monkeypatch.setattr(runner, "_live_transport_factory", lambda name: lambda: ReplayTransport([]))
     saved = []
-    rows = runner.run_suite([], live=True, on_row=lambda r: saved.append(len(r)))
+    rows = runner.run_suite([], live=["gemini_flash"], on_row=lambda r: saved.append(len(r)))
     assert len(rows) == len(SCENARIOS) and all(r["errored"] for r in rows)
     assert saved == list(range(1, len(SCENARIOS) + 1))  # results written after every scenario
-    assert summarise(rows)["gemini_live"]["score"] is None
+    assert summarise(rows)["gemini_flash"]["score"] is None
 
 
 def test_saved_results_replace_the_file_whole(tmp_path, monkeypatch):
@@ -569,6 +569,7 @@ def test_app_adapter_completes_a_live_request_and_spaces_out_clicks():
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, ["m"], "m", 5
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None
     first = analyzer.analyze(DEEP, 1_000, side="buy")
     assert first["success"] and first["source"] == "gemini", first
     second = analyzer.analyze(DEEP, 1_000, side="buy")
@@ -584,6 +585,7 @@ def test_app_adapter_gives_each_request_its_own_conversation():
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = _client([]), ["m"], "m", 0
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None
     first = analyzer._transport("buy", 1_000, "Market")
     second = analyzer._transport("buy", 1_000, "Market")
     assert first is not second
@@ -668,6 +670,7 @@ def _live_analyzer(client, models=("flash", "lite")):
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, list(models), models[0], 0
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None  # in memory: tests never touch the real file
     return analyzer
 
 
@@ -709,6 +712,7 @@ def test_the_notice_says_when_every_model_is_resting():
     analyzer.cooldown.record("lite", _Deadline())
     result = analyzer.analyze(DEEP, 1_000, side="buy")
     assert result["success"] and "resting" in result["notice"]
+    assert "free" not in result["notice"]
     assert "every model is resting" in result["gemini_error"]  # the real cause is kept
 
 
@@ -841,3 +845,126 @@ def test_a_retired_default_is_replaced_even_when_the_run_then_fails():
     analyzer = _live_analyzer(client, models=("old", "new"))
     analyzer.analyze(DEEP, 1_000, side="buy")
     assert analyzer.model == "new"
+
+
+def test_the_daily_cap_answers_from_the_rules_without_calling_the_api():
+    """The demo is public and the key is paid: past the day's allowance, no more API calls."""
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run())
+    analyzer = _live_analyzer(client, models=("m",))
+    analyzer.daily_requests = 1
+    assert analyzer.analyze(DEEP, 1_000, side="buy")["source"] == "gemini"
+    capped = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert capped["success"] and capped["source"] == "baseline"
+    assert "allowance" in capped["notice"] and len(client.models.calls) == 3
+
+
+class _PricedReplay(ReplayTransport):
+    """A replayed model that reports a cost, standing in for a paid live transport."""
+    cost_usd = 0.30
+    usage: ClassVar[dict] = {"input_tokens": 1000, "output_tokens": 100}
+
+
+def test_a_live_run_stops_at_its_spend_cap(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "_live_transport_factory",
+                        lambda name: lambda: _PricedReplay([{"error": "stand-in"}]))
+    rows = runner.run_suite([], live=["claude_haiku"], max_usd=0.50)
+    ran = [r for r in rows if not any("spend cap" in e for e in r["errors"])]
+    assert len(ran) == 2  # $0.30 + $0.30 crosses $0.50; nothing after that starts
+    assert all("spend cap" in r["errors"][0] for r in rows[2:])
+    assert ran[0]["cost_usd"] == 0.30 and ran[0]["tokens_in"] == 1000
+
+
+def test_a_live_key_that_is_not_set_skips_that_model(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert runner._live_transport_factory("claude_haiku") is None
+    assert runner.run_suite([], live=["claude_haiku"]) == []
+
+
+def test_the_report_shows_live_cost_and_is_not_gated(monkeypatch):
+    import evals.runner as runner
+    rows = [
+        {"candidate": "claude_haiku", "scenario": s["id"], "score": 0.5, "critical_failures": ["x"],
+         "checks": [], "latency_ms": 2500.0, "errored": False, "errors": [], "tokens_in": 9000,
+         "tokens_out": 700, "cost_usd": 0.0125}
+        for s in SCENARIOS
+    ]
+    summary = summarise(rows)
+    assert summary["claude_haiku"]["mean_cost_usd"] == 0.0125
+    assert summary["claude_haiku"]["mean_tokens"] == 9700
+    md = runner.to_markdown(rows, summary)
+    assert "| `claude_haiku` | live model | 50.0% |" in md and "$0.0125" in md and "2.5 s" in md
+    assert "No row here was produced against a live model" not in md
+
+
+def test_spend_counts_errored_runs_that_reached_the_api():
+    rows = [
+        {"candidate": "claude_haiku", "scenario": "a", "score": 1.0, "critical_failures": [], "checks": [],
+         "latency_ms": 10.0, "errored": False, "errors": [], "tokens_in": 100, "tokens_out": 0, "cost_usd": 0.01},
+        {"candidate": "claude_haiku", "scenario": "b", "score": 0.0, "critical_failures": [], "checks": [],
+         "latency_ms": 0.0, "errored": True, "errors": ["529"], "tokens_in": 100, "tokens_out": 0,
+         "cost_usd": 0.03},
+    ]
+    entry = summarise(rows)["claude_haiku"]
+    assert entry["mean_cost_usd"] == 0.02 and entry["score"] == 1.0
+
+
+def test_a_missing_anthropic_package_skips_claude(monkeypatch):
+    import builtins
+
+    import evals.runner as runner
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "set")
+    real_import = builtins.__import__
+
+    def no_anthropic(name, *args, **kwargs):
+        if name == "anthropic":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_anthropic)
+    assert runner._live_transport_factory("claude_haiku") is None
+
+
+def test_the_daily_count_survives_a_restart(tmp_path):
+    pytest.importorskip("google.genai")
+    usage_file = str(tmp_path / "usage.json")
+    first = _live_analyzer(_client(_three_call_run()), models=("m",))
+    first.usage_file, first.daily_requests = usage_file, 1
+    assert first.analyze(DEEP, 1_000, side="buy")["source"] == "gemini"
+    restarted = _live_analyzer(_client(_three_call_run()), models=("m",))  # a new worker process
+    restarted.usage_file, restarted.daily_requests = usage_file, 1
+    capped = restarted.analyze(DEEP, 1_000, side="buy")
+    assert capped["source"] == "baseline" and "allowance" in capped["notice"]
+    assert restarted.client.models.calls == []
+
+
+def test_a_click_that_never_reaches_gemini_costs_no_allowance():
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]))
+    analyzer.cooldown.record("flash", _DailyQuota())
+    analyzer.cooldown.record("lite", _Deadline())
+    analyzer.analyze(DEEP, 1_000, side="buy")
+    assert analyzer._requests_today() == 0
+
+
+def test_requests_in_flight_hold_their_slot():
+    """Clicks overlapping a slow request cannot all slip under the cap."""
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]), models=("m",))
+    analyzer.daily_requests = 1
+    analyzer._transport("buy", 1_000, "Market")  # started, not finished
+    with pytest.raises(RateLimited):
+        analyzer._transport("buy", 1_000, "Market")
+    analyzer._count_request(reached=False)  # the first one ended without reaching Gemini
+    analyzer._transport("buy", 1_000, "Market")
+
+
+def test_the_spend_cap_does_not_stop_gemini(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "_live_transport_factory",
+                        lambda name: lambda: _PricedReplay([{"error": "stand-in"}]))
+    rows = runner.run_suite([], live=["claude_haiku", "gemini_flash"], max_usd=0.10)
+    gemini = [r for r in rows if r["candidate"] == "gemini_flash"]
+    assert gemini and not any("spend cap" in e for r in gemini for e in r["errors"])

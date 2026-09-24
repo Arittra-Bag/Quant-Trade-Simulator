@@ -107,9 +107,28 @@ class Transport:
 
     name = "abstract"
     model = ""
+    min_interval = 0.0  # seconds between requests; 0 for none
+    _last_request = 0.0
 
     def begin(self):
         """Called once at the start of every advisor request, before the first propose."""
+
+    def _start_request(self):
+        """
+        Shared start of a live request: fresh usage and answer log, then request pacing.
+        Usage is reset first, so a request the pacing refuses reports no tokens of its own
+        rather than the previous request's.
+        """
+        self.usage, self.answered_by = {}, []
+        wait = self.min_interval - (time.time() - self._last_request)
+        if wait > 0:
+            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
+        self._last_request = time.time()
+
+    def _add_usage(self, **counts):
+        """Add token counts to the current request's totals."""
+        for key, value in counts.items():
+            self.usage[key] = self.usage.get(key, 0) + (value or 0)
 
     def propose(self, system_prompt, user_prompt, history):
         raise NotImplementedError
@@ -278,6 +297,18 @@ class ModelsResting(RateLimited):
     """Every model is cooling down after a failure, so the request was not sent."""
 
 
+class DailyCapReached(RateLimited):
+    """The day's allowance of model requests is spent, so the request was not sent."""
+
+
+class SpendCapReached(RateLimited):
+    """The run's spending limit was reached, so the next call was not sent."""
+
+
+class AnswerTruncated(RuntimeError):
+    """The provider cut the answer off at its output limit before the model finished."""
+
+
 class AdviceInvalid(ValueError):
     """The model answered, but its answer could not be parsed or failed validation."""
 
@@ -406,20 +437,18 @@ class GeminiTransport(Transport):
         self.min_interval = min_interval
         self.call_interval = call_interval
         self.answered_by = []
+        self.usage = {}
         self._last_request = 0.0
         self._last_attempt = 0.0
         self._contents = None
         self._pending = 0
 
     def begin(self):
-        wait = self.min_interval - (time.time() - self._last_request)
-        if wait > 0:
-            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
-        self._last_request = time.time()
+        """Start a request: pacing, a fresh conversation, the deadline clock."""
+        self._start_request()
         self._deadline = time.monotonic() + self.deadline_s if self.deadline_s else None
         self._contents = None
         self._pending = 0
-        self.answered_by = []
 
     def _pace(self):
         wait = self.call_interval - (time.time() - self._last_attempt)
@@ -456,11 +485,22 @@ class GeminiTransport(Transport):
                 if (_model_unavailable(e) or is_transient(e)) and i + 1 < len(candidates):
                     continue  # next model
                 raise
+            self._count(response)
             if default_retired:
                 self.model = model  # the default is retired and not coming back; a busy or resting one is
             self.answered_by.append(model)
             return response
         raise last
+
+    def _count(self, response):
+        """Add a response's token counts to the request's totals, in the Claude transport's keys."""
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return
+        read = lambda key: getattr(meta, key, 0) or 0  # noqa: E731
+        cached = read("cached_content_token_count")
+        self._add_usage(input_tokens=read("prompt_token_count") - cached, cache_read_input_tokens=cached,
+                        output_tokens=read("candidates_token_count") + read("thoughts_token_count"))
 
     def _within_deadline(self, config):
         """
@@ -551,34 +591,39 @@ def _function_calls(response):
 
 
 def _model_unavailable(error):
-    code = getattr(error, "code", None)
+    code = _status(error)
     text = str(error)
     return code == 404 or "NOT_FOUND" in text or "no longer available" in text
 
 
-TRANSIENT_CODES = (429, 500, 502, 503, 504)
+TRANSIENT_CODES = (429, 500, 502, 503, 504, 529)  # 529: Anthropic's "overloaded"
+
+
+def _status(error):
+    """HTTP status of a provider error: `code` on google-genai, `status_code` on anthropic."""
+    return getattr(error, "code", None) or getattr(error, "status_code", None)
 
 
 def is_timeout(error):
     """The call ran out of time: our HTTP timeout, the request budget, or the server's 504."""
     return (isinstance(error, TimeoutError) or "Timeout" in type(error).__name__
-            or "timed out" in str(error).lower() or getattr(error, "code", None) == 504)
+            or "timed out" in str(error).lower() or _status(error) == 504)
 
 
 def is_quota(error):
     """A 429: the model's per-minute or per-day quota is spent."""
-    return getattr(error, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(error)
+    return _status(error) == 429 or "RESOURCE_EXHAUSTED" in str(error)
 
 
 def is_transient(error):
-    """A provider-side failure: quota, overload, a 5xx, or a call that timed out."""
-    return (getattr(error, "code", None) in TRANSIENT_CODES or is_quota(error) or is_timeout(error)
-            or "UNAVAILABLE" in str(error))
+    """A provider-side failure: quota, overload, a 5xx, a dropped connection, or a timeout."""
+    return (_status(error) in TRANSIENT_CODES or is_quota(error) or is_timeout(error)
+            or "UNAVAILABLE" in str(error) or "APIConnectionError" in type(error).__name__)
 
 
 def is_upstream(error):
     """The provider, or our own request throttle, stopped the run before the model answered."""
-    return is_transient(error) or isinstance(error, RateLimited)
+    return is_transient(error) or isinstance(error, (RateLimited, AnswerTruncated))
 
 
 
