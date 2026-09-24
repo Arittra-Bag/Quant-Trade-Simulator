@@ -714,6 +714,7 @@ def feed_action(action, asset=None, exchange=None):
             try:
                 stop_feed()
                 start_feed(symbol, exchange)
+                ensure_book_watcher()  # take in books from the start, before any tab polls
             except Exception as e:
                 print(f"Could not start the feed on {where}: {e!r}", file=sys.stderr, flush=True)
                 return f"Could not start the feed: {e}", f"Could not start the feed on {where}.", "error"
@@ -919,10 +920,10 @@ def ingest_book(feed):
 def watch_books():
     """Ingest books as they land for as long as a feed runs, whether or not a tab is polling."""
     while WATCH_BOOKS:
-        feed = running_feed()
-        if not feed:
-            return
         try:
+            feed = running_feed()
+            if not feed:
+                return
             with _paint_lock:
                 ingest_book(feed)
         except Exception as e:
@@ -959,7 +960,7 @@ def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
         # ages, not the ladder, tiles and charts again. Keyed per browser, since each tab
         # paints alone.
         key = (["no book", meta.get("symbol"), meta.get("exchange")] if not book else
-               book_key + [quantity, volatility, fee_tier, side, order_type])
+               [*book_key, quantity, volatility, fee_tier, side, order_type])
         r = None
         if book and key != painted:
             quantity = float(quantity or 0) or 1.0
