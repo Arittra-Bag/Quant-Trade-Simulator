@@ -147,7 +147,7 @@ def run_suite(candidate_names, live=(), on_row=None, max_usd=LIVE_MAX_USD):
         for i, scenario in enumerate(SCENARIOS, 1):
             if time.time() - started > LIVE_RUN_BUDGET:
                 row = _skipped(name, scenario, f"not run: the {LIVE_RUN_BUDGET:.0f}s run budget was spent")
-            elif spent >= max_usd:
+            elif LIVE_CANDIDATES[name][0] == "claude" and spent >= max_usd:  # the cap is Claude's
                 row = _skipped(name, scenario, f"not run: the ${max_usd:.2f} spend cap was reached")
             else:
                 if hasattr(transport, "budget_usd"):

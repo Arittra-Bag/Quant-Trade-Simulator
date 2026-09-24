@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from advisor.advisor import (GeminiTransport, ModelCooldown, ReplayTransport, RuleTransport,  # noqa: E402
+from advisor.advisor import (GeminiTransport, ModelCooldown, RateLimited, ReplayTransport, RuleTransport,  # noqa: E402
                              run_advisor)
 from advisor.schema import STRATEGIES, strategy_label, validate_advice  # noqa: E402
 from advisor.tools import MAX_TOOL_TURNS, TOOL_DECLARATIONS, BookTools  # noqa: E402
@@ -947,3 +947,24 @@ def test_a_click_that_never_reaches_gemini_costs_no_allowance():
     analyzer.cooldown.record("lite", _Deadline())
     analyzer.analyze(DEEP, 1_000, side="buy")
     assert analyzer._requests_today() == 0
+
+
+def test_requests_in_flight_hold_their_slot():
+    """Clicks overlapping a slow request cannot all slip under the cap."""
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]), models=("m",))
+    analyzer.daily_requests = 1
+    analyzer._transport("buy", 1_000, "Market")  # started, not finished
+    with pytest.raises(RateLimited):
+        analyzer._transport("buy", 1_000, "Market")
+    analyzer._count_request(reached=False)  # the first one ended without reaching Gemini
+    analyzer._transport("buy", 1_000, "Market")
+
+
+def test_the_spend_cap_does_not_stop_gemini(monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "_live_transport_factory",
+                        lambda name: lambda: _PricedReplay([{"error": "stand-in"}]))
+    rows = runner.run_suite([], live=["claude_haiku", "gemini_flash"], max_usd=0.10)
+    gemini = [r for r in rows if r["candidate"] == "gemini_flash"]
+    assert gemini and not any("spend cap" in e for r in gemini for e in r["errors"])

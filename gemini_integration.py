@@ -105,8 +105,12 @@ class GeminiAnalyzer:
             wait = self.min_interval - (time.time() - getattr(self, "_last_request", 0.0))
             if wait > 0:
                 raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
-            if self._requests_today() >= self.daily_requests:
+            # Requests still running count too: a click takes up to 40 s, and without this
+            # several clicks could pass the check before any of them was counted.
+            in_flight = getattr(self, "_in_flight", 0)
+            if self._requests_today() + in_flight >= self.daily_requests:
                 raise DailyCapReached("Rate limited: today's advisor requests are used up")
+            self._in_flight = in_flight + 1
             self._last_request = time.time()
         transport = GeminiTransport(self.client, self.models, cooldown=self.cooldown,
                                     deadline_s=REQUEST_DEADLINE, call_timeout_s=CALL_TIMEOUT)
@@ -128,9 +132,12 @@ class GeminiAnalyzer:
     def _requests_today(self):
         return self._usage_today()["requests"]
 
-    def _count_request(self):
-        """Count one request that reached Gemini against today's allowance."""
+    def _count_request(self, reached=True):
+        """Release a request's reserved slot, counting it against today's allowance if it reached Gemini."""
         with _PACE_LOCK:
+            self._in_flight = max(getattr(self, "_in_flight", 0) - 1, 0)
+            if not reached:
+                return
             usage = self._usage_today()
             usage["requests"] += 1
             self._usage = usage
@@ -181,13 +188,15 @@ class GeminiAnalyzer:
         except Exception as e:  # the panel must never take the page down
             if not is_upstream(e):
                 print(f"Advisor failed: {e!r}", file=sys.stderr, flush=True)
+                if isinstance(transport, GeminiTransport):
+                    self._count_request(reached=bool(transport.answered_by))  # release its slot
                 return {"success": False, "analysis": f"Analysis failed: {e}"}
             failure = e  # our own pacing refused the click
 
-        if getattr(transport, "answered_by", None):
-            # Only a request that reached Gemini spends the allowance; one refused by pacing
-            # or resting models, or answered by the rules, costs nothing.
-            self._count_request()
+        if isinstance(transport, GeminiTransport):
+            # The slot reserved in _transport is released, and kept only if the request
+            # reached Gemini: one refused by resting models or answered by the rules costs nothing.
+            self._count_request(reached=bool(transport.answered_by))
 
         notice, gemini_error = "", ""
         baseline = self.client is None
