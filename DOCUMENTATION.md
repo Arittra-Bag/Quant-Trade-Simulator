@@ -146,8 +146,8 @@ Ranked roughly by how much each would change the numbers:
    quantity.
 2. **Volatility is a slider**, not an estimate from the tape, and it is unitless: it does
    not carry an annualisation or a horizon.
-3. **Visible depth only.** The venues send 25 levels. Past them the walk continues the book at
-   its own average density and says how much of the order that was, which understates the
+3. **Visible depth only.** The app keeps 25 levels from OKX and Kraken and 20 from Binance and
+   Hyperliquid. Past them the walk continues the book at its own average density and says how much of the order that was, which understates the
    cost when a real book thins out faster.
 4. **Fee schedules are a dated snapshot** of each venue's published ladder, not fetched live.
 5. **The AI advisor is scored on one sample per scenario.** CI runs the evals offline against

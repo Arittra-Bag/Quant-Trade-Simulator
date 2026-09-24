@@ -28,7 +28,7 @@ could go either way while the order works, not an expected cost.
 
 **The residual was free.** The old walk filled everything past the last visible level at
 that level's price, so a 1M order into a 200k book reported a fraction of a bp of
-slippage. The book we receive is 25 levels deep; a large order runs off the end of it,
+slippage. The book we keep is 20 to 25 levels deep; a large order runs off the end of it,
 and pretending the last price absorbs the rest is the single biggest way to flatter a
 cost estimate. The walk now continues the book at the average USD density of the
 levels it can see, reports how much of the order that covered (`residual_usd`) and says

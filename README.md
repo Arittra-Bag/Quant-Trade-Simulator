@@ -29,9 +29,9 @@ exchange WebSockets are unreachable. Live venues drive exactly the same path.</s
 | **Maker/taker** | A market order is 0% maker. A passive limit at the touch is `1 / (1 + Q / queue_usd)`, falling as the order grows against the queue ahead of it. |
 | **Calculation latency** | Wall-clock per tick for the model pass and render prep, reported as p50 and p99. |
 
-Books come from OKX (`books5`), Hyperliquid, Binance USD-M futures or Kraken, with automatic
-fallback to the next venue when one is unreachable or accepts the connection but never sends
-data. OKX swap sizes are converted from contracts to base units using the instrument's
+Books come from OKX (the 400-level `books` channel, its deltas verified by sequence and
+checksum), Hyperliquid, Binance USD-M futures or Kraken, with automatic fallback to the next
+venue when one is unreachable or accepts the connection but never sends data. OKX swap sizes are converted from contracts to base units using the instrument's
 contract value. The header shows which venue is actually live, and whether the feed is
 connecting, stale or offline.
 
@@ -44,8 +44,8 @@ This is a cost *estimator*, not a validated execution model. Being specific abou
   and the one recording taken so far could not: about 400k rests at BTC's touch, so no sample
   walked the book. Treat the impact number as a shape that responds correctly to size, not as
   a number you would size a trade on.
-- **Liquidity past the visible book is an assumption.** Depth is the top of book, 25 levels on
-  the venues used here. Beyond it the walk continues the book at the average density of the
+- **Liquidity past the visible book is an assumption.** Depth is the top 25 levels on OKX
+  and Kraken, 20 on Binance and Hyperliquid. Beyond it the walk continues the book at the average density of the
   levels it can see, which is stated in the result rather than hidden; a real book that thins
   out faster would cost more.
 - **Fee schedules are a dated snapshot**, read off each venue's own page rather than fetched

@@ -13,7 +13,7 @@ Measured from the live feed:
   * realised volatility, from the mid-price series the feed produces (VolatilityTracker)
 
 Assumed, and flagged as such in every result:
-  * liquidity past the last visible level. The book we receive is 25 levels deep, so
+  * liquidity past the last visible level. The book we keep is 20 to 25 levels deep, so
     a large order runs off the end of it. We continue the book at the average USD
     density of the visible levels rather than pretending the last price fills the
     rest (see _extrapolated_fill_price).
