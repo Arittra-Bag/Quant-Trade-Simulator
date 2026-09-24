@@ -297,6 +297,7 @@ class VolatilityTracker:
     """
 
     def __init__(self, half_life_s=60.0, min_samples=20, max_gap_s=30.0):
+        """Set the smoothing half-life, the warm-up sample count and the largest usable gap."""
         self.half_life_s = float(half_life_s)
         self.min_samples = int(min_samples)
         self.max_gap_s = float(max_gap_s)
@@ -314,6 +315,7 @@ class VolatilityTracker:
             return self._update(mid, ts)
 
     def _update(self, mid, ts):
+        """Fold one mid into the estimate. Called with the guard held."""
         try:
             mid = float(mid)
         except (TypeError, ValueError):

@@ -22,10 +22,12 @@ FIGURES = [
 
 @pytest.mark.parametrize("name,build", FIGURES, ids=[n for n, _ in FIGURES])
 def test_every_figure_is_valid_plotly(name, build):
+    """Every figure dict passes plotly's validation."""
     go.Figure(build())  # raises on any unknown property or bad value
 
 
 def test_depth_marks_mid_and_vwap():
+    """The depth chart marks the mid and the fill's VWAP."""
     fig = create_orderbook_depth_chart(BOOK, fill={"vwap": 101.2}, dp=1)
     assert [s["x0"] for s in fig["layout"]["shapes"]] == [100.0, 101.2]
     assert fig["layout"]["annotations"][0]["text"] == "VWAP 101.2"
