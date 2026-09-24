@@ -9,12 +9,14 @@ is the loop's handling of that shape, not the real API's behaviour.
 import json
 import os
 import sys
+import time
+from typing import ClassVar
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from advisor.advisor import (GeminiTransport, ReplayTransport, RuleTransport,  # noqa: E402
+from advisor.advisor import (GeminiTransport, ModelCooldown, ReplayTransport, RuleTransport,  # noqa: E402
                              run_advisor)
 from advisor.schema import STRATEGIES, strategy_label, validate_advice  # noqa: E402
 from advisor.tools import MAX_TOOL_TURNS, TOOL_DECLARATIONS, BookTools  # noqa: E402
@@ -379,7 +381,7 @@ def test_a_busy_model_falls_through_to_the_fallback_without_moving_the_default()
     client = _client([_Busy()] + _three_call_run())
     transport = GeminiTransport(client, ["flash", "lite"])
     result = run_advisor(transport, DEEP, "buy", 1_000)
-    assert result.ok and result.models_used == ["flash", "lite"]  # only the busy call moved
+    assert result.ok and result.models_used == ["lite", "flash"]  # in answer order; only the busy call moved
     assert client.models.calls == ["flash", "lite", "flash", "flash"]
     assert transport.model == "flash"  # busy is not retired
 
@@ -566,10 +568,13 @@ def test_app_adapter_completes_a_live_request_and_spaces_out_clicks():
     client = _client(_three_call_run() + _three_call_run())
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, ["m"], "m", 5
+    analyzer.cooldown = ModelCooldown()
     first = analyzer.analyze(DEEP, 1_000, side="buy")
     assert first["success"] and first["source"] == "gemini", first
     second = analyzer.analyze(DEEP, 1_000, side="buy")
-    assert not second["success"] and "Rate limited" in second["analysis"]
+    # A click inside the pacing window answers from the rules and says why, not an error.
+    assert second["success"] and second["source"] == "baseline", second
+    assert "paced" in second["notice"] and len(client.models.calls) == 3
 
 
 def test_app_adapter_gives_each_request_its_own_conversation():
@@ -578,6 +583,261 @@ def test_app_adapter_gives_each_request_its_own_conversation():
     import gemini_integration as gi
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = _client([]), ["m"], "m", 0
+    analyzer.cooldown = ModelCooldown()
     first = analyzer._transport("buy", 1_000, "Market")
     second = analyzer._transport("buy", 1_000, "Market")
     assert first is not second
+
+
+# --------------------------------------------------------------------------- free-tier limits
+class _DailyQuota(Exception):
+    """What the free tier returns once a model's requests-per-day quota is spent."""
+    code = 429
+    details: ClassVar[dict] = {"error": {"details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                                      "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}
+
+    def __str__(self):  # the SDK's message carries the response body, as on the desk
+        return f"429 RESOURCE_EXHAUSTED. {self.details}"
+
+
+class _MinuteQuota(Exception):
+    code = 429
+    details: ClassVar[dict] = {"error": {"details": [
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "37s"}]}}
+
+    def __str__(self):
+        return "429 RESOURCE_EXHAUSTED"
+
+
+class _Deadline(Exception):
+    """The 504 on the desk: the fallback model timed out server-side."""
+    code = 504
+
+    def __str__(self):
+        return "504 DEADLINE_EXCEEDED. Deadline expired before operation could complete."
+
+
+def test_a_model_out_of_daily_quota_is_not_asked_again_until_the_reset():
+    """3.8 Flash at 28/20 a day was still tried first on every call of every click."""
+    pytest.importorskip("google.genai")
+    cooldown = ModelCooldown()
+    client = _client([_DailyQuota(), *_three_call_run(), *_three_call_run()])
+    first = run_advisor(GeminiTransport(client, ["flash", "lite"], cooldown=cooldown), DEEP, "buy", 1_000)
+    assert first.ok and client.models.calls == ["flash", "lite", "lite", "lite"]
+    second = run_advisor(GeminiTransport(client, ["flash", "lite"], cooldown=cooldown), DEEP, "buy", 1_000)
+    assert second.ok and client.models.calls[4:] == ["lite", "lite", "lite"]  # flash never asked
+    assert cooldown.resting()["flash"] > 60
+
+
+def test_cooldowns_match_what_each_error_means():
+    now = 1_790_000_000.0
+    cooldown = ModelCooldown(clock=lambda: now)
+    assert cooldown.cooldown_for(_MinuteQuota()) == 37  # Google's retryDelay
+    assert cooldown.cooldown_for(_Deadline()) == ModelCooldown.BUSY_S
+    assert cooldown.cooldown_for(_Busy()) == ModelCooldown.BUSY_S
+    assert 60 <= cooldown.cooldown_for(_DailyQuota()) <= 25 * 3600  # until midnight Pacific
+    assert cooldown.cooldown_for(_BadRequest()) == 0  # our mistake, not the model's
+
+
+def test_quota_resets_at_midnight_pacific():
+    from datetime import datetime, timezone
+    from advisor.advisor import seconds_to_quota_reset
+    noon_utc = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc).timestamp()  # 05:00 PDT
+    assert seconds_to_quota_reset(noon_utc) == pytest.approx(19 * 3600)
+
+
+def test_every_model_resting_fails_fast_without_calling_the_api():
+    pytest.importorskip("google.genai")
+    cooldown = ModelCooldown()
+    cooldown.record("flash", _DailyQuota())
+    cooldown.record("lite", _Deadline())
+    client = _client([])
+    result = run_advisor(GeminiTransport(client, ["flash", "lite"], cooldown=cooldown), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error and client.models.calls == []
+
+
+def test_a_request_stops_when_its_deadline_passes():
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run())
+    result = run_advisor(GeminiTransport(client, ["m"], deadline_s=1e-9), DEEP, "buy", 1_000)
+    assert not result.ok and result.upstream_error and "budget" in result.errors[0]
+
+
+def _live_analyzer(client, models=("flash", "lite")):
+    import gemini_integration as gi
+    analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
+    analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, list(models), models[0], 0
+    analyzer.cooldown = ModelCooldown()
+    return analyzer
+
+
+def test_the_panel_answers_from_the_rules_when_gemini_cannot():
+    """The desk showed 'Analysis failed: ServerError: 504 DEADLINE_EXCEEDED {...}'."""
+    pytest.importorskip("google.genai")
+    result = _live_analyzer(_client([_DailyQuota(), _Deadline()])).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline" and result["model"] == "rules-v1"
+    assert result["notice"] == "Rules-based read: Gemini took too long to answer."
+
+
+def test_the_notice_names_a_spent_daily_quota():
+    pytest.importorskip("google.genai")
+    result = _live_analyzer(_client([_DailyQuota()]), models=("flash",)).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and "daily" in result["notice"]
+
+
+def test_a_live_answer_carries_no_notice():
+    pytest.importorskip("google.genai")
+    result = _live_analyzer(_client(_three_call_run())).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "gemini" and result["notice"] == ""
+
+
+
+def test_answering_while_the_default_rests_does_not_make_the_fallback_the_default():
+    """One 503 on Lite used to hand the lead to 3.8 Flash, 20 requests a day, for good."""
+    pytest.importorskip("google.genai")
+    cooldown = ModelCooldown()
+    cooldown.record("lite", _Busy())
+    transport = GeminiTransport(_client(_three_call_run()), ["lite", "flash"], cooldown=cooldown)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert transport.model == "lite" and transport.answered_by == ["flash"] * 3
+
+
+def test_the_notice_says_when_every_model_is_resting():
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]))
+    analyzer.cooldown.record("flash", _DailyQuota())
+    analyzer.cooldown.record("lite", _Deadline())
+    result = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and "resting" in result["notice"]
+    assert "every model is resting" in result["gemini_error"]  # the real cause is kept
+
+
+def test_each_call_is_cut_to_what_is_left_of_the_deadline():
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run())
+    seen = []
+    real = client.models.generate_content
+
+    def spy(model, contents, config):
+        seen.append(config.http_options.timeout)
+        return real(model=model, contents=contents, config=config)
+
+    client.models.generate_content = spy
+    assert run_advisor(GeminiTransport(client, ["m"], deadline_s=10), DEEP, "buy", 1_000).ok
+    assert len(seen) == 3 and all(1000 <= t <= 10_000 for t in seen)
+
+
+def test_a_zero_retry_delay_is_honoured():
+    class _NoWait(_MinuteQuota):
+        details: ClassVar[dict] = {"error": {"details": [{"retryDelay": "0s"}]}}
+    assert ModelCooldown().cooldown_for(_NoWait()) == 0
+
+
+def test_a_bug_is_reported_not_passed_off_as_a_gemini_outage():
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]))
+    del analyzer.cooldown  # a broken analyzer: _transport raises AttributeError
+    result = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert not result["success"] and "Analysis failed" in result["analysis"]
+
+
+def test_the_label_names_the_model_that_answered():
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client(_three_call_run()), models=("lite", "flash"))
+    analyzer.cooldown.record("lite", _Busy())
+    result = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert result["source"] == "gemini" and result["model"] == "flash"
+
+
+def test_the_deadline_never_lifts_a_call_above_its_own_timeout():
+    """A 40 s budget replaced the 20 s per-call timeout, so one hung call ate the whole click."""
+    pytest.importorskip("google.genai")
+    client = _client(_three_call_run())
+    seen = []
+    real = client.models.generate_content
+
+    def spy(model, contents, config):
+        seen.append(config.http_options.timeout)
+        return real(model=model, contents=contents, config=config)
+
+    client.models.generate_content = spy
+    transport = GeminiTransport(client, ["m"], deadline_s=40, call_timeout_s=20)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert seen and all(t <= 20_000 for t in seen)
+
+
+def test_a_timeout_the_deadline_forced_does_not_rest_the_model():
+    pytest.importorskip("google.genai")
+    cooldown = ModelCooldown()
+    transport = GeminiTransport(_client([_Timeout()]), ["lite"], cooldown=cooldown, deadline_s=5, call_timeout_s=20)
+    assert not run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert cooldown.resting() == {}  # our 5 s cut, not the model's fault
+
+
+def test_only_a_retired_default_moves_the_default():
+    pytest.importorskip("google.genai")
+    client = _client([_Busy(), *_three_call_run()], unavailable={"b"})
+    transport = GeminiTransport(client, ["a", "b", "c"])
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok
+    assert transport.model == "a"  # b's 404 says nothing about a, which was only busy
+
+
+def test_an_invalid_gemini_answer_falls_back_to_the_rules():
+    pytest.importorskip("google.genai")
+    client = _client([_FakeResponse(text="done"), _FakeResponse(text="not json at all")])
+    result = _live_analyzer(client, models=("m",)).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline"
+    assert result["notice"] == "Rules-based read: Gemini's answer did not pass validation."
+
+
+def test_a_rejected_request_is_not_called_a_validation_failure():
+    pytest.importorskip("google.genai")
+    client = _client([_BadRequest()])
+    result = _live_analyzer(client, models=("m",)).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline"
+    assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
+
+
+def test_a_run_without_advice_is_not_called_a_validation_failure(monkeypatch):
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]), models=("m",))
+    junk = type("T", (), {"name": "gemini", "model": "m", "propose": lambda self, *a: "not a turn"})()
+    monkeypatch.setattr(analyzer, "_transport", lambda *a: junk)
+    result = analyzer.analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline"
+    assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
+
+
+def test_a_sub_second_budget_is_not_lifted_past_the_deadline():
+    pytest.importorskip("google.genai")
+    from google.genai import types
+    transport = GeminiTransport(_client([]), ["m"], deadline_s=40, call_timeout_s=20)
+    transport.begin()
+    transport._deadline = time.monotonic() + 0.5
+    with pytest.raises(TimeoutError):
+        transport._within_deadline(types.GenerateContentConfig())
+
+
+def test_a_spent_budget_does_not_hide_the_models_own_error(monkeypatch):
+    pytest.importorskip("google.genai")
+    transport = GeminiTransport(_client([_DailyQuota()]), ["flash", "lite"], deadline_s=30)
+    real = transport._within_deadline
+    calls = []
+
+    def budget_gone_after_first(config):
+        calls.append(1)
+        if len(calls) > 1:
+            raise TimeoutError("budget ran out")
+        return real(config)
+
+    monkeypatch.setattr(transport, "_within_deadline", budget_gone_after_first)
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert isinstance(result.exception, _DailyQuota)
+
+
+def test_a_retired_default_is_replaced_even_when_the_run_then_fails():
+    pytest.importorskip("google.genai")
+    client = _client([_FakeResponse(text="done"), _BadRequest()], unavailable={"old"})
+    analyzer = _live_analyzer(client, models=("old", "new"))
+    analyzer.analyze(DEEP, 1_000, side="buy")
+    assert analyzer.model == "new"

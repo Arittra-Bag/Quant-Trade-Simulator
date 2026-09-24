@@ -44,9 +44,12 @@ The application integrates Google's Gemini AI to provide market analysis and tra
 - Execution approach suggestions
 
 The Gemini integration:
-- Uses the `google-genai` SDK with `gemini-3.8-flash` by default (override with `GEMINI_MODEL`)
-- Falls back to `gemini-3.5-flash-lite` (override with `GEMINI_FALLBACK_MODELS`) if Google retires or restricts the default, so a model shutdown no longer breaks the panel
-- Makes a single JSON-mode call per request
+- Uses the `google-genai` SDK with `gemini-3.5-flash-lite` by default (override with `GEMINI_MODEL`). One click is up to seven calls, and on the free tier Lite allows 15 a minute and 500 a day, where 3.8 Flash allows 5 and 20
+- Falls back to `gemini-3.8-flash` (override with `GEMINI_FALLBACK_MODELS`) if the default is retired, busy or out of quota
+- A model that fails is rested rather than tried first on every call: until midnight Pacific for a spent daily quota, for Google's `retryDelay` (or 60 s) for a per-minute one, and 30 s when busy or timed out
+- Each call times out after `GEMINI_CALL_TIMEOUT` (20 s) and a click after `GEMINI_DEADLINE` (40 s)
+- When Gemini cannot answer, the panel shows the rules-based read with a one-line note saying why, not the raw API error
+- Runs a short tool loop against the live book, then one schema-constrained call for the final JSON
 - Securely stores API credentials in environment variables
 - Formats orderbook data into structured prompts
 - Processes JSON responses for clean UI presentation

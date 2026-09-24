@@ -21,7 +21,11 @@ transcript. That is why `GeminiTransport` has a `_finalise` step.
 """
 import json
 import math
+import re
+import sys
+import threading
 import time
+from datetime import datetime, timedelta
 
 from .schema import ADVICE_SCHEMA, validate_advice
 from .tools import MAX_TOOL_TURNS, TOOL_DECLARATIONS, BookTools
@@ -57,8 +61,9 @@ class AdviceResult:
     """One advisor run: the advice, how it was produced, and what went wrong."""
 
     def __init__(self, advice=None, errors=None, tool_calls=None, transport="", model="",
-                 turns=0, latency_ms=0.0, raw=None, upstream_error=False, models_used=None):
+                 turns=0, latency_ms=0.0, raw=None, upstream_error=False, models_used=None, exception=None):
         self.advice = advice
+        self.exception = exception  # what stopped the run, for callers that classify it
         self.upstream_error = upstream_error  # the provider failed; the model never answered
         self.models_used = list(models_used or [])
         self.errors = list(errors or [])
@@ -265,6 +270,98 @@ def _approach(strategy, slices, horizon, limit_price, side):
     return "Do not send this order into the current book."
 
 
+class RateLimited(RuntimeError):
+    """Our own pacing refused the request before any model was asked."""
+
+
+class ModelsResting(RateLimited):
+    """Every model is cooling down after a failure, so the request was not sent."""
+
+
+class AdviceInvalid(ValueError):
+    """The model answered, but its answer could not be parsed or failed validation."""
+
+
+class ModelCooldown:
+    """
+    Which models to leave alone for now, shared by every request in the process.
+
+    The free tier caps each model per minute and per day. Without this, every call of every
+    request tried the spent model first: one click is up to seven calls, so a model whose
+    daily quota was gone cost seven failed round trips before the fallback answered, and a
+    slow failure (504) could run the click past its deadline. A model that failed is now
+    skipped until it can plausibly answer again:
+
+    - daily quota spent (429 naming a per-day quota): until the quota resets, midnight Pacific
+    - per-minute quota (other 429): Google's retryDelay, or 60 s
+    - busy, 5xx or timed out: 30 s
+    """
+
+    MINUTE_S = 60.0
+    BUSY_S = 30.0
+
+    def __init__(self, clock=time.time):
+        self._until = {}
+        self._clock = clock
+        self._guard = threading.Lock()
+
+    def ready(self, models):
+        """`models` in order, without those still cooling down."""
+        now = self._clock()
+        with self._guard:
+            return [m for m in models if self._until.get(m, 0.0) <= now]
+
+    def record(self, model, error):
+        """Put `model` on cooldown for as long as `error` says it will keep failing."""
+        seconds = self.cooldown_for(error)
+        if seconds <= 0:
+            return
+        with self._guard:
+            self._until[model] = max(self._until.get(model, 0.0), self._clock() + seconds)
+
+    def resting(self):
+        """{model: seconds left} for every model still cooling down."""
+        now = self._clock()
+        with self._guard:
+            return {m: t - now for m, t in self._until.items() if t > now}
+
+    def cooldown_for(self, error):
+        """Seconds to rest a model after `error`; 0 for an error that is ours, not the model's."""
+        if not is_transient(error):
+            return 0.0
+        if is_daily_quota(error):
+            return seconds_to_quota_reset(self._clock())
+        if is_quota(error):
+            delay = retry_delay(error)
+            return self.MINUTE_S if delay is None else delay
+        return self.BUSY_S
+
+
+def is_daily_quota(error):
+    """A 429 for a per-day quota, which will not clear until the daily reset."""
+    text = f"{error} {getattr(error, 'details', '')}"
+    return "PerDay" in text or "per day" in text.lower()
+
+
+def retry_delay(error):
+    """The retryDelay Google attaches to a 429, in seconds, or None."""
+    match = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", f"{error} {getattr(error, 'details', '')}")
+    return float(match.group(1)) if match else None
+
+
+def _pacific():
+    """US Pacific time, from the OS database or the pinned tzdata package."""
+    from zoneinfo import ZoneInfo
+    return ZoneInfo("America/Los_Angeles")
+
+
+def seconds_to_quota_reset(now):
+    """Seconds from `now` (epoch) to the next midnight Pacific, when free-tier daily quotas reset."""
+    local = datetime.fromtimestamp(now, _pacific())
+    midnight = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(60.0, midnight.timestamp() - now)
+
+
 class GeminiTransport(Transport):
     """
     Live Gemini transport.
@@ -282,6 +379,11 @@ class GeminiTransport(Transport):
     ends the request. Only a retired model moves the default for later requests, and
     `answered_by` records which model answered each call of the current request.
 
+    With a `cooldown` (a ModelCooldown shared across requests), a model that failed is
+    skipped until it can plausibly answer again, and a request with every model resting
+    fails at once without calling the API. Skipping a resting model does not move the
+    default. `deadline_s` bounds one request: each call's timeout is cut to what is left.
+
     `call_interval` spaces API calls by at least that many seconds, for batch runs on the
     free tier (5 calls a minute per model). The client itself should carry a timeout, so
     one unanswered call cannot hang a run.
@@ -292,8 +394,13 @@ class GeminiTransport(Transport):
 
     name = "gemini"
 
-    def __init__(self, client, models, min_interval=0.0, call_interval=0.0):
+    def __init__(self, client, models, min_interval=0.0, call_interval=0.0, cooldown=None, deadline_s=None,
+                 call_timeout_s=None):
         self.client = client
+        self.call_timeout_s = call_timeout_s  # the client's per-call timeout, kept under the deadline
+        self.cooldown = cooldown  # a ModelCooldown shared across requests, or None
+        self.deadline_s = deadline_s  # wall-clock budget for one request, or None
+        self._deadline = None
         self.models = list(models)
         self.model = self.models[0] if self.models else ""
         self.min_interval = min_interval
@@ -307,8 +414,9 @@ class GeminiTransport(Transport):
     def begin(self):
         wait = self.min_interval - (time.time() - self._last_request)
         if wait > 0:
-            raise RuntimeError(f"Rate limited, try again in {wait:.0f}s")
+            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
         self._last_request = time.time()
+        self._deadline = time.monotonic() + self.deadline_s if self.deadline_s else None
         self._contents = None
         self._pending = 0
         self.answered_by = []
@@ -321,21 +429,60 @@ class GeminiTransport(Transport):
 
     def _call(self, contents, config):
         candidates = [self.model] + [m for m in self.models if m != self.model]
-        last = None
+        if self.cooldown is not None:
+            candidates = self.cooldown.ready(candidates)
+            if not candidates:
+                raise ModelsResting("Rate limited: every model is resting after hitting its free-tier limit")
+        last, default_retired = None, False
         for i, model in enumerate(candidates):
             self._pace()
             try:
-                response = self.client.models.generate_content(model=model, contents=contents, config=config)
+                call_config, cut_short = self._within_deadline(config)
+            except TimeoutError:
+                if last is not None:
+                    raise last from None  # the model's own failure is the real cause, not the budget
+                raise
+            try:
+                response = self.client.models.generate_content(model=model, contents=contents, config=call_config)
             except Exception as e:
                 last = e
+                default_retired = default_retired or (model == self.model and _model_unavailable(e))
+                # A timeout we imposed to meet the request's deadline is not the model's fault.
+                if self.cooldown is not None and not (cut_short and is_timeout(e)):
+                    try:
+                        self.cooldown.record(model, e)
+                    except Exception as bookkeeping:  # never hide the model's error behind ours
+                        print(f"Model cooldown: {bookkeeping!r}", file=sys.stderr, flush=True)
                 if (_model_unavailable(e) or is_transient(e)) and i + 1 < len(candidates):
                     continue  # next model
                 raise
-            if i == 0 or _model_unavailable(last):
-                self.model = model  # a retired model is not coming back; a busy one is
+            if default_retired:
+                self.model = model  # the default is retired and not coming back; a busy or resting one is
             self.answered_by.append(model)
             return response
         raise last
+
+    def _within_deadline(self, config):
+        """
+        (`config`, cut_short): the config with its HTTP timeout cut to what is left of the
+        request's budget, and whether that cut it below the normal per-call timeout.
+
+        Checking the deadline only before each call let one slow call run the click past it
+        by a whole call timeout; the remaining budget now bounds the call itself, and never
+        lifts it above the per-call timeout.
+        """
+        if self._deadline is None:
+            return config, False
+        left = self._deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(f"the {self.deadline_s:.0f}s budget for this request ran out")
+        timeout_ms = int((left if self.call_timeout_s is None else min(left, self.call_timeout_s)) * 1000)
+        if timeout_ms < 1000:
+            # Lifting a sub-second remainder to the 1 s floor would run the call past the deadline.
+            raise TimeoutError(f"the {self.deadline_s:.0f}s budget for this request ran out")
+        from google.genai import types
+        call = config.model_copy(update={"http_options": types.HttpOptions(timeout=timeout_ms)})
+        return call, self.call_timeout_s is not None and left < self.call_timeout_s
 
     def propose(self, system_prompt, user_prompt, history):
         from google.genai import types
@@ -412,17 +559,26 @@ def _model_unavailable(error):
 TRANSIENT_CODES = (429, 500, 502, 503, 504)
 
 
+def is_timeout(error):
+    """The call ran out of time: our HTTP timeout, the request budget, or the server's 504."""
+    return (isinstance(error, TimeoutError) or "Timeout" in type(error).__name__
+            or "timed out" in str(error).lower() or getattr(error, "code", None) == 504)
+
+
+def is_quota(error):
+    """A 429: the model's per-minute or per-day quota is spent."""
+    return getattr(error, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(error)
+
+
 def is_transient(error):
     """A provider-side failure: quota, overload, a 5xx, or a call that timed out."""
-    code = getattr(error, "code", None)
-    text = str(error)
-    return (code in TRANSIENT_CODES or "RESOURCE_EXHAUSTED" in text or "UNAVAILABLE" in text
-            or "timed out" in text.lower() or "Timeout" in type(error).__name__)
+    return (getattr(error, "code", None) in TRANSIENT_CODES or is_quota(error) or is_timeout(error)
+            or "UNAVAILABLE" in str(error))
 
 
 def is_upstream(error):
     """The provider, or our own request throttle, stopped the run before the model answered."""
-    return is_transient(error) or (isinstance(error, RuntimeError) and str(error).startswith("Rate limited"))
+    return is_transient(error) or isinstance(error, RateLimited)
 
 
 
@@ -433,8 +589,11 @@ def _parse_json(text):
         text = text[text.find("{"):]
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError("no JSON object in response")
-    return json.loads(text[start:end + 1])
+        raise AdviceInvalid("no JSON object in response")
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError as e:
+        raise AdviceInvalid(f"response is not valid JSON: {e}") from e
 
 
 # ------------------------------------------------------------------------------- driver
@@ -461,7 +620,7 @@ def run_advisor(transport, book, side, notional, *, order_type="Market", fee_tie
         age=book_age or "unknown",
     )
 
-    errors, turns, raw, upstream = [], 0, None, False
+    errors, turns, raw, upstream, failure = [], 0, None, False, None
     try:
         begin = getattr(transport, "begin", None)  # optional, for duck-typed transports
         if begin is not None:
@@ -488,6 +647,7 @@ def run_advisor(transport, book, side, notional, *, order_type="Market", fee_tie
     except Exception as e:
         errors.append(f"{type(e).__name__}: {e}")
         upstream = is_upstream(e)
+        failure = e
 
     advice = None
     if raw is not None:
@@ -504,5 +664,6 @@ def run_advisor(transport, book, side, notional, *, order_type="Market", fee_tie
         latency_ms=(time.perf_counter() - started) * 1e3,
         raw=raw,
         upstream_error=upstream,
-        models_used=sorted(set(getattr(transport, "answered_by", None) or [])),
+        models_used=list(dict.fromkeys(getattr(transport, "answered_by", None) or [])),  # answer order
+        exception=failure,
     )

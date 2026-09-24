@@ -1090,7 +1090,10 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
         return html.Span(result.get("analysis", "Analysis unavailable"), className="warn")
     sentiment = result.get("sentiment", "Neutral")
     tone = "pos" if sentiment == "Bullish" else "neg" if sentiment == "Bearish" else "muted"
+    # When Gemini could not answer, the read comes from the rules; say so above it.
+    notice = result.get("notice")
     return html.Div([
+        html.P(notice, className="warn ai-notice") if notice else None,
         html.Div([html.Span(sentiment, className=f"tag {tone}"),
                   html.Span(result.get("strategy", ""), className="ai-strategy"),
                   html.Span(f"{result.get('expected_cost_bps', 0):.1f} bps quoted", className="muted mono"),
