@@ -20,6 +20,7 @@ except ImportError:  # Windows: the thread lock alone guards the feed
 import dash
 import numpy as np
 from dash import Input, Output, State, ctx, dcc, html
+from flask_compress import Compress
 
 from export import export_orderbook_to_csv, export_orderbook_to_excel
 from gemini_integration import GeminiAnalyzer
@@ -57,6 +58,38 @@ gemini_analyzer = GeminiAnalyzer()
 app = dash.Dash(__name__, title="Quant Trade Simulator", update_title=None,
                 meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}])
 server = app.server  # for gunicorn: gunicorn app:server
+
+
+class StaticBundleCache:
+    """
+    Flask-Compress cache that keeps only Dash's JS and CSS bundles.
+
+    Compressing plotly's multi-megabyte bundle costs over a second of a free instance's CPU,
+    and every new visitor asks for it. The bundle URLs are fingerprinted, so a compressed copy
+    per path and encoding stays valid for the life of the process. Callback responses get an
+    empty key from bundle_cache_key and are never stored.
+    """
+    def __init__(self):
+        self._store = {}
+
+    def get(self, key):
+        return self._store.get(key)
+
+    def set(self, key, value):
+        if not key.endswith(";"):
+            self._store[key] = value
+
+
+def bundle_cache_key(request):
+    if request.method == "GET" and request.path.startswith("/_dash-component-suites/"):
+        return request.full_path
+    return ""
+
+
+# Polls are JSON a few KB to tens of KB; compressed they cross a slow link several times faster.
+server.config.update(COMPRESS_CACHE_BACKEND=StaticBundleCache, COMPRESS_CACHE_KEY=bundle_cache_key,
+                     COMPRESS_ALGORITHM=["br", "gzip"])
+Compress(server)
 
 app.index_string = """<!DOCTYPE html>
 <html lang="en">
