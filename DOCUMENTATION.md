@@ -63,7 +63,13 @@ The Gemini integration:
 - **Budget**: at most 2 revisions, and none once the run is 45 s old; a plan still blocked then reaches the approver marked unresolved.
 - **Approval**: refused if more than 120 s after planning. The checkpointer keeps the last 32 runs; an older or restart-lost run reports that it expired.
 - **Paper execution** (`agent/execution.py`): each child order walks the latest book from the feed. Slices go 0.25 s apart, not over the advised horizon. A passive limit is filled at its expected value: the queue model's maker share fills at the touch and the rest crosses. The reported cost is implementation shortfall against the arrival mid, fees included, in bps of the filled notional; permanent impact cannot be observed on a paper fill.
-- **Known gap**: `quote_order` prices a resting limit as if it crossed the spread, while the paper fill does not, so a passive plan tends to fill well under its quoted cost. Scoring fills against the recorded trade tape in `validation/` is the next step.
+- **Known gap**: `quote_order` prices a resting limit as if it crossed the spread, while the paper fill does not, so a passive plan tends to fill well under its quoted cost. `validation/posttrade.py` scores both against a recorded tape.
+
+### Post-trade scoring
+`python -m validation.posttrade <recording>` replays the agent's plans over a recording from `validation/record.py`, in non-overlapping windows (default: $250k, 60 s, 4 slices, both sides):
+- **TWAP**: each slice walks the recorded book of its moment through the agent's paper executor. The prediction is the same slices walked against the arrival book, which is `compare_schedule`'s full-refill assumption; the difference, measured against each slice's own mid, is the refill error. The score against the arrival mid adds price drift.
+- **Passive limit**: the order rests at the touch behind the queue already there, fills from sellers (for a buy) printing at that price beyond the queue, or completely if a trade prints through it, and crosses the rest at the end. It is compared with the queue model's maker share, `quote_order`'s Limit price and the agent's expected-value paper fill.
+- The tape is polled, so a burst of more than 100 trades between polls is partly missed, and the queue ahead is assumed never to cancel; both make the realised passive fill a floor.
 
 ## Environment Configuration
 The application uses environment variables for sensitive configuration:
@@ -140,10 +146,14 @@ Ranked roughly by how much each would change the numbers:
    quantity.
 2. **Volatility is a slider**, not an estimate from the tape, and it is unitless: it does
    not carry an annualisation or a horizon.
-3. **Visible depth only.** `books5` is five levels. Orders past the visible book have the
-   remainder priced at the last level and flagged, which understates the true cost.
-4. **One fee schedule for all venues**, taker only, no maker rebates.
-5. **The Gemini panel has no schema validation, no tool use and no evals**, and is not
-   exercised by the test suite or CI.
-6. **Polling, not push.** The UI pulls from disk on a fixed interval rather than being driven
-   by book updates.
+3. **Visible depth only.** The venues send 25 levels. Past them the walk continues the book at
+   its own average density and says how much of the order that was, which understates the
+   cost when a real book thins out faster.
+4. **Fee schedules are a dated snapshot** of each venue's published ladder, not fetched live.
+5. **The AI advisor is scored on one sample per scenario.** CI runs the evals offline against
+   replay fixtures; the live models were run once each (evals/RESULTS.md).
+6. **Polling, not push.** The browser asks for the next update when the last one has landed,
+   rather than being driven by book updates.
+7. **A resting limit is quoted as if it crossed the spread.** `quote_order` changes only the
+   maker probability for a Limit order. `python -m validation.posttrade` measures the gap against
+   a recorded tape (see below).

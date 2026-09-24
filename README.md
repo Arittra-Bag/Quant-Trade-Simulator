@@ -180,7 +180,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-248 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
+262 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
 advisor loop and both model transports against mocked APIs, the eval graders, the execution
 agent's graph, critic and paper fills, and the feed client driven against local WebSocket
 servers, including the case where a venue accepts the connection but never sends a book,
@@ -202,7 +202,7 @@ import check that the app loads with no feed and no API key.
 | `agent/` | Execution agent: LangGraph graph, critic, paper execution, planners |
 | `evals/` | Scenarios, graders, replay fixtures, the eval runner and the critic eval |
 | `export.py` | CSV and Excel export of the current book |
-| `validation/` | Records books and the public trade tape, and scores predicted cost against it |
+| `validation/` | Records books and the public trade tape; scores predicted cost, and the agent's plans (`posttrade.py`), against it |
 | `assets/theme.css` | Desk theme, served automatically by Dash |
 
 `DOCUMENTATION.md` has the model derivations and the environment configuration in full, and
