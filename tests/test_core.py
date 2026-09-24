@@ -743,3 +743,26 @@ def test_okx_checksum_zero_means_none_and_the_sequence_still_guards():
     assert len(wc.validate_book(venue.parse(upd))["bids"]) == 2
     with pytest.raises(wc.BookIntegrityError, match="out of sequence"):
         venue.parse(_okx("update", [], [], seq=14, prev=12, checksum=0))
+
+
+def test_client_resubscribes_to_okx_after_a_sequence_gap(tmp_path, monkeypatch):
+    """The whole path: a gap raises inside the stream, the loop keeps OKX, and subscribes to books again."""
+    subscribed = []
+
+    async def okx(ws):
+        subscribed.append(json.loads(await ws.recv())["args"][0]["channel"])
+        await ws.send(json.dumps(_okx("snapshot", [["65000.0", "40"]], [["65001.0", "50"]], seq=10, checksum=0)))
+        await ws.send(json.dumps(_okx("update", [], [], seq=14, prev=12, checksum=0)))
+        await asyncio.sleep(3)
+
+    async def run():
+        server = await _serve(okx)
+        monkeypatch.setenv("ORDERBOOK_WS_URL_OKX", f"ws://127.0.0.1:{_port(server)}")
+        monkeypatch.setattr(wc, "okx_contract_value", lambda s: 0.01)
+        task = asyncio.create_task(wc.connect_and_save("BTC-USDT-SWAP", str(tmp_path / "book.json"), 0.0, "OKX"))
+        await asyncio.sleep(1.5)
+        task.cancel()
+        server.close()
+
+    asyncio.run(run())
+    assert subscribed[:2] == ["books", "books"]
