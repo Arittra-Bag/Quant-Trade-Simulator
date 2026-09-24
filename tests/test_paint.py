@@ -26,6 +26,7 @@ BOOK = {"symbol": "BTC-USDT-SWAP", "source": "SIM", "local_time": time.time(),
 
 @pytest.fixture
 def painter(tmp_path, monkeypatch):
+    """Isolated painter state, plus helpers to write a book and run one poll."""
     book_file = tmp_path / "latest_orderbook.json"
     monkeypatch.setattr(app, "ORDERBOOK_FILE", str(book_file))
     monkeypatch.setattr(app, "STATUS_FILE", str(tmp_path / "feed_status.json"))
@@ -39,21 +40,25 @@ def painter(tmp_path, monkeypatch):
     monkeypatch.setattr(models, "_tracker", models.VolatilityTracker())
 
     def write_book(**changes):
+        """Write a book with a strictly newer modification time."""
         book_file.write_text(json.dumps({**BOOK, **changes}))
         mtime = time.time() + app.update_count + 1  # a strictly newer file each time
         os.utime(book_file, (mtime, mtime))
 
     def paint(order=ORDER, painted=None):
+        """Run one poll and key its outputs by id.prop."""
         return dict(zip(app.PAINT_KEYS, app.update_tables(1, *order, painted), strict=True))
 
     return write_book, paint
 
 
 def sent(out):
+    """The outputs a poll actually sends, i.e. not no_update."""
     return {k for k, v in out.items() if v is not dash.no_update}
 
 
 def test_full_paint_returns_every_output(painter):
+    """A first paint sets every output."""
     write_book, paint = painter
     write_book()
     out = paint()
@@ -62,6 +67,7 @@ def test_full_paint_returns_every_output(painter):
 
 
 def test_unchanged_poll_sends_only_the_clock(painter):
+    """An unchanged poll skips the ladder, tiles and charts."""
     write_book, paint = painter
     write_book()
     key = paint()["painted.data"]
@@ -73,6 +79,7 @@ def test_unchanged_poll_sends_only_the_clock(painter):
 
 
 def test_new_book_repaints(painter):
+    """A new book repaints everything."""
     write_book, paint = painter
     write_book()
     key = paint()["painted.data"]
@@ -81,6 +88,7 @@ def test_new_book_repaints(painter):
 
 
 def test_changed_order_repaints(painter):
+    """A new order size repaints everything."""
     write_book, paint = painter
     write_book()
     key = paint()["painted.data"]
@@ -88,6 +96,7 @@ def test_changed_order_repaints(painter):
 
 
 def test_idle_desk_sends_only_the_clock_after_the_first_paint(painter, monkeypatch):
+    """With no feed, only the first poll sends the empty desk."""
     _, paint = painter
     monkeypatch.setattr(app, "read_feed", lambda: None)
     first = paint()
@@ -96,6 +105,7 @@ def test_idle_desk_sends_only_the_clock_after_the_first_paint(painter, monkeypat
 
 
 def test_paint_only_rejects_unknown_outputs():
+    """A typo in an output key fails loudly."""
     with pytest.raises(KeyError):
         app.paint_only({"no-such.children": 1})
 
@@ -106,6 +116,7 @@ def test_a_failed_paint_still_answers(painter, monkeypatch):
     write_book()
 
     def broken(*_):
+        """Stand in for compute() failing on a bad book."""
         raise ValueError("bad book")
 
     monkeypatch.setattr(app, "compute", broken)
@@ -115,6 +126,7 @@ def test_a_failed_paint_still_answers(painter, monkeypatch):
 
 
 def test_paint_all_requires_every_output():
+    """A full paint that forgets an output fails loudly."""
     with pytest.raises(KeyError):
         app.paint_all({"feed-line.data": {}})
 

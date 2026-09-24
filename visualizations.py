@@ -18,12 +18,14 @@ MONO = "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
 
 
 def _axis(**kw):
+    """Axis settings in the desk theme, with overrides."""
     axis = {"gridcolor": GRID, "zeroline": False, "linecolor": GRID, "tickfont": {"color": MUTED}}
     axis.update(kw)
     return axis
 
 
 def _layout(height=None, xaxis=None, yaxis=None, **kw):
+    """Figure layout in the desk theme, with axis and layout overrides."""
     layout = {
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
@@ -43,14 +45,17 @@ def _layout(height=None, xaxis=None, yaxis=None, **kw):
 
 
 def _vline(x, **line):
+    """A vertical line shape across the full plot height at data x."""
     return {"type": "line", "xref": "x", "yref": "y domain", "x0": x, "x1": x, "y0": 0, "y1": 1, "line": line}
 
 
 def _hline(y, **line):
+    """A horizontal line shape across the full plot width at data y."""
     return {"type": "line", "xref": "x domain", "yref": "y", "x0": 0, "x1": 1, "y0": y, "y1": y, "line": line}
 
 
 def empty_figure(message="Waiting for book", height=None):
+    """A blank chart with a centred message."""
     return {"data": [], "layout": _layout(
         height, xaxis={"visible": False}, yaxis={"visible": False},
         annotations=[{"text": message, "showarrow": False, "xref": "paper", "yref": "paper", "x": 0.5, "y": 0.5,
@@ -76,6 +81,7 @@ def create_orderbook_depth_chart(orderbook_data, fill=None, height=None, dp=2):
     mid = (bids[0, 0] + asks[0, 0]) / 2
 
     def side(prices, cum, name, color, fillcolor, label):
+        """One side of the book as a cumulative-depth step trace."""
         return {"type": "scatter", "x": prices.tolist(), "y": cum.tolist(), "name": name, "mode": "lines",
                 "line": {"color": color, "width": 1.5, "shape": "hv"}, "fill": "tozeroy", "fillcolor": fillcolor,
                 "hovertemplate": f"{label} %{{x:,.{dp}f}}<br>cum $%{{y:,.0f}}<extra></extra>"}

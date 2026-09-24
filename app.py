@@ -79,14 +79,17 @@ class StaticBundleCache:
     MAX_ENTRIES = 32
 
     def __init__(self):
+        """Start with an empty store."""
         self._store = OrderedDict()
         self._guard = threading.Lock()
 
     def get(self, key):
+        """The cached compressed bytes for `key`, or None."""
         # A plain read: flask-compress calls set() after every get(), which records the use.
         return self._store.get(key)
 
     def set(self, key, value):
+        """Store a compressed bundle, evicting the least recently used past the cap."""
         if self.MARKER not in key:
             return
         with self._guard:
@@ -97,6 +100,7 @@ class StaticBundleCache:
 
 
 def bundle_cache_key(request):
+    """Cache key for a Dash bundle request, or an empty key for anything else."""
     # The path alone: the query string is not part of what Dash serves. Under a URL prefix
     # the bundles move with it.
     bundles = f"{app.config.routes_pathname_prefix}_dash-component-suites/"
@@ -932,6 +936,7 @@ def watch_books():
 
 
 def ensure_book_watcher():
+    """Start the book watcher unless one is already running."""
     global _watcher
     with _watcher_lock:
         if WATCH_BOOKS and (_watcher is None or not _watcher.is_alive()):
@@ -940,6 +945,7 @@ def ensure_book_watcher():
 
 
 def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
+    """Build the painter's outputs: the whole desk, or only the clock parts when unchanged."""
     side = side or "buy"
     feed = read_feed()
     state, label, detail = feed_state(feed)
