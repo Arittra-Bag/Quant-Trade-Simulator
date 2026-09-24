@@ -1050,7 +1050,7 @@ def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
 
     return paint_all({
         **clock,
-        "hdr-symbol.children": book.get("symbol") or meta.get("symbol", "—"),
+        "hdr-symbol.children": book.get("instrument") or book.get("symbol") or meta.get("symbol", "—"),
         "hdr-venue.children": book.get("source") or meta.get("exchange") or "—",
         "hdr-mid.children": f"{s['mid']:,.{dp}f}",
         "hdr-spread.children": f"{s['spread_bps']:.2f} bps",

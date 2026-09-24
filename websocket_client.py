@@ -427,7 +427,10 @@ class BookWriter:
         self.status["books"] += 1
         if now - self.last_write < self.update_interval:
             return
-        book.update({"local_time": now, "symbol": self.symbol, "source": source, "size_unit": "base"})
+        # `instrument` is what the venue actually streams (Kraken's BTC/USD spot for a BTC-USDT-SWAP
+        # request), so the header does not show the requested name over another market's book.
+        book.update({"local_time": now, "symbol": self.symbol, "source": source, "size_unit": "base",
+                     "instrument": normalize_symbol_for_venue(self.symbol, source).upper()})
         try:
             self._atomic_write(self.output_file, book)
             self.last_write = now
