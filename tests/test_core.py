@@ -766,3 +766,15 @@ def test_client_resubscribes_to_okx_after_a_sequence_gap(tmp_path, monkeypatch):
 
     asyncio.run(run())
     assert subscribed[:2] == ["books", "books"]
+
+
+def test_the_book_names_the_market_the_venue_streams(tmp_path):
+    """A BTC-USDT-SWAP request on Kraken streams BTC/USD spot; the header must say so."""
+    import json
+    out = tmp_path / "book.json"
+    for source, instrument in (("KRAKEN", "BTC/USD"), ("OKX", "BTC-USDT-SWAP"), ("BINANCE", "BTCUSDT"),
+                               ("HYPERLIQUID", "BTC")):
+        writer = wc.BookWriter(str(out), "BTC-USDT-SWAP", 0)
+        writer.write_book({"bids": [[99.0, 1.0]], "asks": [[101.0, 1.0]], "timestamp": 1}, source)
+        book = json.loads(out.read_text())
+        assert book["instrument"] == instrument and book["symbol"] == "BTC-USDT-SWAP"
