@@ -32,7 +32,7 @@ from dotenv import load_dotenv  # noqa: E402
 # Before the settings below are read, so a local .env sets them as well as the API keys.
 load_dotenv()
 
-from advisor.advisor import run_advisor  # noqa: E402
+from advisor.advisor import _status, run_advisor  # noqa: E402
 from evals.candidates import CANDIDATES, DESCRIPTIONS, REAL_CANDIDATES  # noqa: E402
 from evals.graders import grade, ground_truth  # noqa: E402
 from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
@@ -126,8 +126,7 @@ def _setup_failure(result, transport):
     """
     if transport is None or result.exception is None or getattr(transport, "answered_by", None):
         return False
-    status = getattr(result.exception, "code", None) or getattr(result.exception, "status_code", None)
-    return status in SETUP_CODES and not any(transport_usage(transport).values())
+    return _status(result.exception) in SETUP_CODES and not any(transport_usage(transport).values())
 
 
 def transport_usage(transport):
