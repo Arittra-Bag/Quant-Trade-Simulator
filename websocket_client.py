@@ -24,7 +24,9 @@ import math
 import os
 import random
 import signal
+import ssl
 import time
+import urllib.error
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 
@@ -75,14 +77,39 @@ def normalize_symbol_for_venue(symbol, venue):
     return symbol
 
 
+# OKX answers urllib's default "Python-urllib/3.x" agent with 403.
+USER_AGENT = "quant-trade-simulator/1.0"
+
+
+def get_json(url, timeout=10):
+    """
+    GET a JSON document with a real User-Agent. If the system's certificate store cannot
+    verify the host, as on python.org builds for macOS until their certificate installer is
+    run, retry once against certifi's bundle rather than failing every request.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+    except urllib.error.URLError as e:
+        if not isinstance(e.reason, ssl.SSLCertVerificationError):
+            raise
+        try:
+            import certifi
+        except ImportError:
+            raise e from None
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=ssl.create_default_context(cafile=certifi.where())) as resp:
+            return json.load(resp)
+
+
 def okx_contract_value(symbol):
     """Base units per contract for an OKX derivative, 1.0 for spot."""
     if not symbol.upper().endswith(("-SWAP", "-FUTURES")) and symbol.count("-") < 2:
         return 1.0
     try:
         url = f"https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId={symbol}"
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            data = json.load(resp).get("data") or []
+        data = get_json(url, timeout=5).get("data") or []
         if data and data[0].get("ctVal"):
             return float(data[0]["ctVal"])
     except Exception as e:

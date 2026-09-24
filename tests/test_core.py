@@ -354,7 +354,7 @@ def test_recorder_sends_a_user_agent():
         def __exit__(self, *_):
             self.close()
 
-    def fake_urlopen(req, timeout=None):
+    def fake_urlopen(req, timeout=None, context=None):
         seen["ua"] = req.get_header("User-agent")
         return FakeResponse(b'{"data": []}')
 
@@ -365,6 +365,51 @@ def test_recorder_sends_a_user_agent():
     finally:
         urllib.request.urlopen = original
     assert seen["ua"] == rec.USER_AGENT and "urllib" not in seen["ua"]
+
+
+def test_an_unverifiable_certificate_is_retried_against_certifi(monkeypatch):
+    """python.org builds for macOS fail every request until pointed at a CA bundle."""
+    import io
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    import websocket_client as wc
+    calls = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        calls.append(context)
+        if context is None:
+            raise urllib.error.URLError(ssl.SSLCertVerificationError("unable to get local issuer certificate"))
+        return io.BytesIO(b'{"data": [{"ctVal": "0.01"}]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert wc.okx_contract_value("BTC-USDT-SWAP") == 0.01
+    assert calls[0] is None and isinstance(calls[1], ssl.SSLContext)
+
+
+def test_contract_value_lookup_sends_a_real_user_agent(monkeypatch):
+    """OKX answers urllib's default agent with 403, which silently fell back to a default."""
+    import io
+    import urllib.request
+
+    import websocket_client as wc
+    agents = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        agents.append(req.get_header("User-agent"))
+        return io.BytesIO(b'{"data": [{"ctVal": "0.1"}]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert wc.okx_contract_value("ETH-USDT-SWAP") == 0.1 and agents == [wc.USER_AGENT]
+
+
+def test_the_recorder_stops_when_every_request_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(rec, "fetch_book", lambda *a: (_ for _ in ()).throw(OSError("unreachable")))
+    monkeypatch.setattr(rec, "contract_value", lambda s: 0.01)
+    monkeypatch.setattr(rec.time, "sleep", lambda s: None)
+    with pytest.raises(SystemExit, match="10 requests in a row failed"):
+        rec.record(minutes=60, out=str(tmp_path / "x.jsonl"))
 
 
 def test_validation_ignores_windows_with_no_trades():
