@@ -28,6 +28,7 @@ import ssl
 import time
 import urllib.error
 import urllib.request
+import zlib
 from importlib.metadata import PackageNotFoundError, version
 
 import websockets
@@ -81,6 +82,20 @@ def normalize_symbol_for_venue(symbol, venue):
 USER_AGENT = "quant-trade-simulator/1.0"
 
 
+_CERTIFI = {}
+
+
+def certifi_context():
+    """An SSL context over certifi's CA bundle, or None if certifi is not installed. Cached."""
+    if "ctx" not in _CERTIFI:
+        try:
+            import certifi
+            _CERTIFI["ctx"] = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            _CERTIFI["ctx"] = None
+    return _CERTIFI["ctx"]
+
+
 def get_json(url, timeout=10):
     """
     GET a JSON document with a real User-Agent. If the system's certificate store cannot
@@ -92,15 +107,35 @@ def get_json(url, timeout=10):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.load(resp)
     except urllib.error.URLError as e:
-        if not isinstance(e.reason, ssl.SSLCertVerificationError):
+        ctx = certifi_context() if isinstance(e.reason, ssl.SSLCertVerificationError) else None
+        if ctx is None:
             raise
-        try:
-            import certifi
-        except ImportError:
-            raise e from None
-        with urllib.request.urlopen(req, timeout=timeout,
-                                    context=ssl.create_default_context(cafile=certifi.where())) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return json.load(resp)
+
+
+# Set once the system store has failed to verify a venue, so later connects go straight to certifi.
+_WS_TLS = {"certifi": False}
+
+
+async def open_ws(url):
+    """
+    Open a WebSocket. Like get_json, a certificate the system store cannot verify is retried
+    against certifi's bundle, and later connects use it directly; a proxy that installs its
+    own CA in the system store keeps working, since the system store is tried first.
+    """
+    kw = {"ping_interval": 20, "ping_timeout": 10, "open_timeout": 10, "max_size": 2 ** 22}
+    secure = url.startswith("wss://")
+    if secure and _WS_TLS["certifi"] and certifi_context() is not None:
+        return await websockets.connect(url, ssl=certifi_context(), **kw)
+    try:
+        return await websockets.connect(url, **kw)
+    except ssl.SSLCertVerificationError:
+        if not secure or certifi_context() is None:
+            raise
+        logger.warning("The system certificate store could not verify the venue; using certifi's bundle")
+        _WS_TLS["certifi"] = True
+        return await websockets.connect(url, ssl=certifi_context(), **kw)
 
 
 def okx_contract_value(symbol):
@@ -147,25 +182,90 @@ class Venue:
 
 
 class OKXVenue(Venue):
-    """OKX books5: a full top-5 snapshot every 100 ms, so no delta bookkeeping is needed."""
+    """
+    OKX `books`: a 400-level snapshot, then deltas. Each delta names the sequence it follows
+    and carries a CRC32 of the top 25 levels, so a missed or misapplied update is caught
+    and the book is resubscribed rather than drifting silently.
+
+    `books5` (a fresh top-5 snapshot every 100 ms) is the fallback: after CHECKSUM_STRIKES
+    bad deltas in a row (checksum or sequence) the venue switches to it, so a checksum bug can cost depth but
+    never the feed.
+    """
     name = "OKX"
     url = "wss://ws.okx.com:8443/ws/v5/public"
+    CHECKSUM_STRIKES = 3
+    _strikes = {}  # per symbol, across reconnects
 
     def __init__(self, symbol, ct_val=None):
         super().__init__(symbol)
         self.ct_val = ct_val if ct_val is not None else okx_contract_value(symbol)
+        self.channel = "books5" if OKXVenue._strikes.get(symbol, 0) >= self.CHECKSUM_STRIKES else "books"
+        self._bids, self._asks, self._seq = {}, {}, None
 
     def subscribe_message(self):
-        return {"op": "subscribe", "args": [{"channel": "books5", "instId": self.venue_symbol}]}
+        return {"op": "subscribe", "args": [{"channel": self.channel, "instId": self.venue_symbol}]}
+
+    def _strike(self):
+        OKXVenue._strikes[self.symbol] = OKXVenue._strikes.get(self.symbol, 0) + 1
+        if OKXVenue._strikes[self.symbol] == self.CHECKSUM_STRIKES:
+            logger.warning(f"OKX: {self.CHECKSUM_STRIKES} bad deltas in a row; falling back to books5 (5 levels)")
+
+    @staticmethod
+    def _apply(side, rows):
+        for row in rows:
+            price, size = row[0], row[1]
+            if float(size) == 0:
+                side.pop(price, None)
+            else:
+                side[price] = size
+
+    def _sorted(self):
+        bids = sorted(self._bids.items(), key=lambda kv: -float(kv[0]))
+        asks = sorted(self._asks.items(), key=lambda kv: float(kv[0]))
+        return bids, asks
+
+    @staticmethod
+    def checksum(bids, asks):
+        """OKX's checksum: CRC32 of the top 25 levels as bidPx:bidSz:askPx:askSz:..., signed."""
+        parts = []
+        for i in range(25):
+            if i < len(bids):
+                parts += bids[i][:2]
+            if i < len(asks):
+                parts += asks[i][:2]
+        crc = zlib.crc32(":".join(parts).encode())
+        return crc - (1 << 32) if crc >= (1 << 31) else crc
 
     def parse(self, msg):
-        if msg.get("arg", {}).get("channel") != "books5" or not msg.get("data"):
+        channel = msg.get("arg", {}).get("channel")
+        if channel != self.channel or not msg.get("data"):
             return None
-        book = msg["data"][0]
+        data = msg["data"][0]
+        if channel == "books5":
+            bids, asks = data.get("bids", []), data.get("asks", [])
+        else:
+            if msg.get("action") == "snapshot":
+                self._bids, self._asks = {}, {}
+            elif self._seq is None or data.get("prevSeqId") != self._seq:
+                self._strike()
+                raise ConnectionError(f"OKX: update out of sequence ({data.get('prevSeqId')} after {self._seq})")
+            self._apply(self._bids, data.get("bids", []))
+            self._apply(self._asks, data.get("asks", []))
+            self._seq = data.get("seqId")
+            bids, asks = self._sorted()
+            if "checksum" in data and self.checksum(bids, asks) != int(data["checksum"]):
+                self._strike()
+                raise ConnectionError("OKX: book checksum mismatch, resubscribing")
+            if msg.get("action") == "update":
+                # Only a verified delta clears the strikes: every resubscribe starts from a
+                # snapshot that checks out, so resetting on snapshots would retry a broken
+                # update path forever instead of falling back.
+                OKXVenue._strikes[self.symbol] = 0
+            bids, asks = bids[:BOOK_DEPTH], asks[:BOOK_DEPTH]
         return {
-            "bids": _levels(book.get("bids", []), self.ct_val),
-            "asks": _levels(book.get("asks", []), self.ct_val),
-            "timestamp": int(book.get("ts", time.time() * 1000)),
+            "bids": _levels([[p, q] for p, q, *_ in bids], self.ct_val),
+            "asks": _levels([[p, q] for p, q, *_ in asks], self.ct_val),
+            "timestamp": int(data.get("ts", time.time() * 1000)),
         }
 
 
@@ -333,8 +433,7 @@ async def stream_venue(venue, writer):
     logger.info(f"Connecting to {venue.name} {url} for {venue.venue_symbol}")
     writer.write_status(state="connecting", source=venue.name)
     got_book = False
-    async with websockets.connect(url, ping_interval=20, ping_timeout=10, open_timeout=10,
-                                  max_size=2 ** 22) as ws:
+    async with await open_ws(url) as ws:
         sub = venue.subscribe_message()
         if sub:
             await ws.send(json.dumps(sub))
