@@ -27,6 +27,8 @@ def _child(book, side, notional, strategy, fee_tier, venue):
         maker = predict_maker_taker(book, notional, "Limit")
         touch = stats["bid"] if side == "buy" else stats["ask"]
         crossed = walk_book(book, notional * (1 - maker), side) if maker < 1 else None
+        if maker < 1 and crossed is None:
+            return None
         base = notional * maker / touch + (crossed["filled_base"] if crossed else 0.0)
         return {"notional": notional, "base": base, "vwap": notional / base if base else touch,
                 "maker_share": maker, "mid": stats["mid"], "complete": crossed["complete"] if crossed else True,

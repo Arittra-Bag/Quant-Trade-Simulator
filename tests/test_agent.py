@@ -135,6 +135,9 @@ def test_the_advised_schedule_is_priced_alongside_the_alternatives():
     plans = plans_to_price(_advice(strategy="twap", slices=6, horizon_seconds=600))
     assert ("twap", 6) in [(p["strategy"], p["slices"]) for p in plans if p["advised"]]
     assert not any(p["advised"] for p in plans_to_price(_advice(strategy="wait", slices=1)))
+    order, book = _case("thin_book_oversized_buy")
+    iceberg = [price_plan(order, book, p) for p in plans_to_price(_advice(strategy="iceberg", slices=8))]
+    assert [p["label"] for p in iceberg if p["advised"]] == ["iceberg x8"]
 
 
 # ------------------------------------------------------------------------------ execution
