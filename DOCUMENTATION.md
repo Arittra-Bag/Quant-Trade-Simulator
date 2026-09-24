@@ -88,9 +88,13 @@ expression documented above.
 
 The feed client runs as a separate process from the Dash server. It writes the newest book to
 `latest_orderbook.json` and its connection state to `feed_status.json`, each via a temporary
-file and an atomic rename so the UI never reads a half-written book. The UI polls those files
-on a 500 ms interval. The decoupling means a slow or reconnecting venue cannot block the UI,
-and the feed keeps running across page reloads.
+file and an atomic rename so the UI never reads a half-written book. While a feed runs, a
+thread in the server takes in each new book (and feeds the volatility estimate) every 500 ms,
+whether or not a browser is open. The browser polls the server at most twice a second, and
+only once the previous poll has answered, so a slow link updates less often rather than
+freezing; a hidden tab polls every 5 s. A poll whose book and order are unchanged returns only
+the feed state and the ages. The decoupling means a slow or reconnecting venue cannot block
+the UI, and the feed keeps running across page reloads.
 
 One feed runs per server process and is shared by everyone who opens the page, so a public
 deployment behaves as single-user.
@@ -102,9 +106,9 @@ order) on every tick, and the **Latency** panel reports p50 and p99 over a bound
 buffer. That is the only latency figure the project actually measures, and it covers model
 computation and render preparation, not the network path.
 
-End-to-end latency is dominated by the 500 ms UI interval by construction. The model pass is
-orders of magnitude smaller than that interval, which is why the interval, not the maths, is
-what you would shorten first.
+End-to-end latency is dominated by the poll cadence (at most two a second) and the network
+round trip, by construction. The model pass is orders of magnitude smaller than either, which
+is why the cadence, not the maths, is what you would shorten first.
 
 ### What is not measured
 

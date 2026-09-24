@@ -24,7 +24,7 @@ from flask_compress import Compress
 
 from export import export_orderbook_to_csv, export_orderbook_to_excel
 from gemini_integration import GeminiAnalyzer
-from models import book_stats, estimate_costs
+from models import book_stats, estimate_costs, measure_volatility
 from visualizations import (create_latency_time_series, create_orderbook_depth_chart,
                             create_transaction_cost_breakdown, empty_figure)
 
@@ -46,6 +46,10 @@ VENUE_NAMES = {value: label for label, value in VENUES}
 # FEED_FILE, not here, so every server process and every restart sees the same answer.
 _lock = threading.Lock()  # Start and Stop
 _paint_lock = threading.Lock()  # the cached book and latency history below
+_watcher_lock = threading.Lock()
+_watcher = None  # thread taking in books while a feed runs
+WATCH_BOOKS = True
+WATCH_SECONDS = 0.5
 client_process = None  # the feed this process started, if any
 feed_started = None  # which feed the cached book below belongs to
 orderbook_data = None
@@ -883,8 +887,51 @@ def update_tables(_, quantity, volatility, fee_tier, side, order_type, painted):
                            "painted.data": None})
 
 
-def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
+def ingest_book(feed):
+    """
+    Take in the newest book, if there is one. Called with _paint_lock held.
+
+    Each new book also goes to the volatility estimate here, not only when a browser paints
+    it, so the estimate keeps up while nobody is looking.
+    """
     global orderbook_data, data_last_modified, update_count, feed_started
+    # A feed started since the cached book was read, here or in another process: the old
+    # book belongs to the previous instrument, so drop it rather than paint it as current.
+    if feed and feed.get("started") != feed_started:
+        feed_started = feed.get("started")
+        orderbook_data, data_last_modified, update_count = None, 0.0, 0
+        calc_latency_us.clear()
+
+    new_data, modified = read_orderbook_data(data_last_modified)
+    if new_data and feed is not None:
+        orderbook_data, data_last_modified = new_data, modified
+        update_count += 1
+        measure_volatility(new_data)
+
+
+def watch_books():
+    """Ingest books as they land for as long as a feed runs, whether or not a tab is polling."""
+    while WATCH_BOOKS:
+        feed = running_feed()
+        if not feed:
+            return
+        try:
+            with _paint_lock:
+                ingest_book(feed)
+        except Exception as e:
+            print(f"Book watcher: {e!r}", file=sys.stderr, flush=True)
+        time.sleep(WATCH_SECONDS)
+
+
+def ensure_book_watcher():
+    global _watcher
+    with _watcher_lock:
+        if WATCH_BOOKS and (_watcher is None or not _watcher.is_alive()):
+            _watcher = threading.Thread(target=watch_books, name="book-watcher", daemon=True)
+            _watcher.start()
+
+
+def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
     side = side or "buy"
     feed = read_feed()
     state, label, detail = feed_state(feed)
@@ -892,20 +939,12 @@ def paint_desk(quantity, volatility, fee_tier, side, order_type, painted):
     line = {"text": line_text, "tone": line_tone, "now": time.time()}
     meta = feed or {}
 
+    if feed and state != "down":
+        ensure_book_watcher()
     # Polls run on several threads. The cached book, its counters and the latency history
     # change together, so each poll updates and reads them as one step.
     with _paint_lock:
-        # A feed started since the cached book was read, here or in another process: the old
-        # book belongs to the previous instrument, so drop it rather than paint it as current.
-        if feed and feed.get("started") != feed_started:
-            feed_started = feed.get("started")
-            orderbook_data, data_last_modified, update_count = None, 0.0, 0
-            calc_latency_us.clear()
-
-        new_data, modified = read_orderbook_data(data_last_modified)
-        if new_data and feed is not None:
-            orderbook_data, data_last_modified = new_data, modified
-            update_count += 1
+        ingest_book(feed)
         book, count = orderbook_data, update_count
         book_key = [feed_started, data_last_modified]
 
