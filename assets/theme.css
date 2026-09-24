@@ -227,6 +227,16 @@ button:focus-visible, summary:focus-visible, [role="button"]:focus-visible {
 .ai-head { display: flex; align-items: center; gap: 10px; }
 .ai-notice { margin: 0 0 8px; font-size: 12px; }
 .ai-strategy { font-weight: 600; color: var(--text); }
+.agent-actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn-approve { background: var(--accent); color: #0d0f12; border-color: var(--accent); font-weight: 600; }
+.btn-approve:disabled { opacity: .6; cursor: progress; }
+.agent-trace { margin: 6px 0 0; font-size: 11px; }
+.agent-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+.agent-table th { text-align: left; font-weight: 500; color: var(--text-2); border-bottom: 1px solid var(--line-2); padding: 3px 6px 3px 0; }
+.agent-table td { padding: 3px 6px 3px 0; border-bottom: 1px solid var(--line); }
+.agent-table td:nth-child(2), .agent-table th:nth-child(2) { text-align: right; }
+.agent-advised { color: var(--accent); font-weight: 600; }
+.agent-finding { font-size: 12px; }
 .tag { font: 600 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border: 1px solid currentColor; border-radius: 2px; }
 
 /* ---------------- ladder */

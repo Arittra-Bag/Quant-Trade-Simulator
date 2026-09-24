@@ -86,42 +86,91 @@ python websocket_client.py --symbol BTC-USDT-SWAP --exchange OKX
 
 `ORDERBOOK_WS_URL_<VENUE>` (for example `ORDERBOOK_WS_URL_OKX`) overrides a venue's endpoint.
 
+## Execution agent
+
+**Plan** in the Execution agent panel runs a LangGraph state machine from the order to a
+paper fill, with a human approval step before anything is sent:
+
+```mermaid
+flowchart LR
+    plan[plan<br/>tool-calling advisor] --> price[price<br/>every plan, in parallel]
+    price --> critic[critic<br/>deterministic checks]
+    critic -- blocked, at most 2 revisions --> plan
+    critic --> approve{{approve<br/>human, via interrupt}}
+    approve -- approved --> execute[execute<br/>paper fills vs the live book]
+    approve -- rejected --> stop((end))
+```
+
+- **plan**: the advisor from the AI panel proposes a strategy, with the same daily cap, model
+  fallback and rules baseline. On a revision it is given the critic's findings.
+- **price**: the advised plan and its alternatives (one clip, resting limit, TWAP x4, TWAP x10)
+  are priced against the same book, fanned out with `Send`.
+- **critic**: plain Python, not a second model. It blocks a plan whose cited cost is not what
+  the plan prices at, whose side is wrong, that sends a single clip into a book too thin to
+  fill it, or that trades an order more than 10x the visible depth; it notes a much cheaper
+  alternative without blocking. A blocked plan goes back to the planner, at most twice, then
+  to the human with the findings marked unresolved.
+- **approve**: `interrupt()` pauses the run and an in-memory checkpointer holds it until you
+  press Approve or Reject. An approval more than 2 minutes after planning is refused,
+  because the book it was priced on has moved.
+- **execute**: each child order is filled by walking the latest book from the feed, and the
+  result is the implementation shortfall against the arrival mid, next to the planned cost.
+  The horizon is compressed to a quarter-second between slices, and nothing leaves the process.
+
+The critic enforces the same rules the evals grade (`advisor/policy.py`). Run over the 32
+recorded live answers, it blocks the 3 the graders fail and none of the 29 they pass; over
+the 40 replay-fixture answers it blocks 25 of 26 failures, with no false alarms
+([method and every case](evals/CRITIC.md)). Because the rules are shared, that shows the
+critic enforces what the evals measure, not that the rules are right. The one miss is a
+scenario judgment the critic cannot see: a TWAP for a $1,000 order.
+
+LangGraph is imported on the first **Plan**, not at start-up; it adds about 33 MB then.
+
 ## AI advisor evals
 
 The advisor is a tool-calling loop: the model prices the order with the same cost functions
 the desk uses (`quote_order`, `get_depth_profile`, `compare_schedule`, `get_book_stats`) and
 answers in a fixed JSON schema. `evals/` scores it on 8 recorded books, from a small buy into
 a deep book to an order larger than everything visible, with graders for schema, side,
-whether the cost it cites is one it actually quoted, whether it admits when the book cannot
-show the fill, and tool economy. Offline replay fixtures, each built to break one grader,
-prove the graders catch what they claim to.
+whether the cost it cites is one the book quotes for its plan, whether it admits when the book
+cannot show the fill, and tool economy. Offline replay fixtures, each built to break one
+grader, prove the graders catch what they claim to.
 
 Live run, one sample per scenario ([full results](evals/RESULTS.md)):
 
 | Model | Score | Scenarios without a critical failure | Mean latency | Tokens per run | Cost per run |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `claude-haiku-4-5` | 97.9% | 8/8 | 12.8 s | 8,322 | $0.011 |
-| `gemini-3.5-flash-lite` | 95.3% | 7/8 | 6.1 s | 6,170 | GCP credit |
-| `gemini-3.8-flash` | 94.4% | 7/8 | 16.1 s | 14,661 | GCP credit |
-| `claude-sonnet-5` (effort low) | 93.8% | 8/8 | 11.1 s | 8,392 | $0.012 |
+| `claude-haiku-4-5` | 99.5% | 8/8 | 12.8 s | 8,322 | $0.011 |
+| `gemini-3.5-flash-lite` | 98.4% | 7/8 | 6.1 s | 6,170 | GCP credit |
+| `claude-sonnet-5` (effort low) | 98.4% | 8/8 | 11.1 s | 8,392 | $0.012 |
+| `gemini-3.8-flash` | 97.5% | 7/8 | 16.1 s | 14,661 | GCP credit |
 | rules baseline | 100.0% | 8/8 | 0.1 ms | - | - |
 
 What it shows:
 
-- **The models are close.** 94 to 98% on one sample each is not a ranking to trust at the
-  second digit. Haiku was the most consistent, with no critical failure in any scenario.
+- **The models are close.** 97.5 to 99.5% on one sample each is not a ranking to trust at the
+  second digit. Each model lost points on at most one scenario.
+- **The misses are on the hard books.** Of the 32 live answers, 4 failed a check: 3.8 Flash
+  advised waiting on a $50M order without saying it is 2,500x the visible book; Flash Lite
+  described a sell as a buy; Sonnet advised an iceberg for that same $50M order, where only
+  waiting is defensible; Haiku repeated an identical tool call. The first three are what the
+  execution agent's critic now blocks.
 - **The bigger Gemini did not earn its cost.** 3.8 Flash scored no better than Flash Lite and
   took 2.6x as long on 2.4x the tokens, so the app leads with Flash Lite and keeps 3.8 Flash
   as the fallback.
-- **The common miss is grounding.** `cost_grounded` (citing a cost the model never quoted)
-  failed in 8 of the 32 live runs, more than any other check, and the points are lost on the
-  thin-book and oversized orders, where the honest answer is that the book cannot show the fill.
+- **The grader was wrong before the models were.** The first write-up of this run reported
+  cost grounding as the most common miss, 8 of 32 answers. Every one of those 8 was a TWAP or
+  iceberg citing the exact cost `compare_schedule` quoted for its own slice count, and the
+  grader only accepted the one-clip cost. The grader now accepts the plan's own price, and
+  `--regrade` re-scored the saved answers without calling a model again.
 - **The rules baseline scores 100% by construction.** The graders encode the same thresholds,
   so it is a consistency check on the harness, not a bar the models are expected to clear.
 
 ```bash
 python -m evals.runner                                  # offline, what CI runs
 python -m evals.runner --live --max-usd 0.50            # every live model whose key is set
+python -m evals.runner --regrade evals/results.json --markdown evals/RESULTS.md
+python -m evals.critic_eval --markdown evals/CRITIC.md  # the agent's critic vs the graders
 ```
 
 ## Tests
@@ -131,9 +180,11 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-221 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
-advisor loop and both model transports against mocked APIs, the eval graders, and the feed client driven against local WebSocket servers, including the case where a venue
-accepts the connection but never sends a book, which must trigger fallback. CI runs the same
+248 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
+advisor loop and both model transports against mocked APIs, the eval graders, the execution
+agent's graph, critic and paper fills, and the feed client driven against local WebSocket
+servers, including the case where a venue accepts the connection but never sends a book,
+which must trigger fallback. CI runs the same
 suite on Python 3.11 and 3.12 on every pull request and on every push to `main`, plus an
 import check that the app loads with no feed and no API key.
 
@@ -148,7 +199,8 @@ import check that the app loads with no feed and no API key.
 | `visualizations.py` | Depth, cost-stack and latency charts |
 | `gemini_integration.py` | The AI panel: Gemini advisor with fallback, daily cap and rules baseline |
 | `advisor/` | Tool-calling advisor loop, tools, schema, Gemini and Claude transports |
-| `evals/` | Scenarios, graders, replay fixtures and the eval runner |
+| `agent/` | Execution agent: LangGraph graph, critic, paper execution, planners |
+| `evals/` | Scenarios, graders, replay fixtures, the eval runner and the critic eval |
 | `export.py` | CSV and Excel export of the current book |
 | `validation/` | Records books and the public trade tape, and scores predicted cost against it |
 | `assets/theme.css` | Desk theme, served automatically by Dash |

@@ -56,6 +56,15 @@ USER_TEMPLATE = """Order under consideration:
 
 Work out how to execute it. Use the tools, then give your advice."""
 
+# Appended on a revision: what a reviewer found wrong with the previous answer.
+FEEDBACK_TEMPLATE = """
+
+A reviewer rejected your previous advice for this order:
+{findings}
+
+Price again with the tools where a number was wrong, and answer again. Fix each point, or \
+say in your reasoning why it does not apply."""
+
 
 class AdviceResult:
     """One advisor run: the advice, how it was produced, and what went wrong."""
@@ -644,12 +653,13 @@ def _parse_json(text):
 # ------------------------------------------------------------------------------- driver
 
 def run_advisor(transport, book, side, notional, *, order_type="Market", fee_tier="Tier 1",
-                volatility=0.01, max_turns=MAX_TOOL_TURNS, book_age=None):
+                volatility=0.01, max_turns=MAX_TOOL_TURNS, book_age=None, feedback=None):
     """
     Drive one advisor run to a validated AdviceResult. Never raises.
 
     `book_age` is a human string like "0.4s"; it is put in the prompt so the model can
-    say the read is stale rather than pretending the snapshot is live.
+    say the read is stale rather than pretending the snapshot is live. `feedback`, a list
+    of strings, is a reviewer's findings on a previous answer, for a revision.
     """
     started = time.perf_counter()
     side = "sell" if str(side).lower() == "sell" else "buy"
@@ -664,6 +674,8 @@ def run_advisor(transport, book, side, notional, *, order_type="Market", fee_tie
         volatility=float(volatility),
         age=book_age or "unknown",
     )
+    if feedback:
+        user_prompt += FEEDBACK_TEMPLATE.format(findings="\n".join(f"- {f}" for f in feedback))
 
     errors, turns, raw, upstream, failure = [], 0, None, False, None
     try:

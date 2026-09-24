@@ -845,7 +845,7 @@ def test_a_run_without_advice_is_not_called_a_validation_failure(monkeypatch):
     pytest.importorskip("google.genai")
     analyzer = _live_analyzer(_client([]), models=("m",))
     junk = type("T", (), {"name": "gemini", "model": "m", "propose": lambda self, *a: "not a turn"})()
-    monkeypatch.setattr(analyzer, "_transport", lambda *a: junk)
+    monkeypatch.setattr(analyzer, "_transport", lambda *a, **k: junk)
     result = analyzer.analyze(DEEP, 1_000, side="buy")
     assert result["success"] and result["source"] == "baseline"
     assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
@@ -1007,3 +1007,57 @@ def test_the_spend_cap_does_not_stop_gemini(monkeypatch):
     rows = runner.run_suite([], live=["claude_haiku", "gemini_flash"], max_usd=0.10)
     gemini = [r for r in rows if r["candidate"] == "gemini_flash"]
     assert gemini and not any("spend cap" in e for r in gemini for e in r["errors"])
+
+
+# ------------------------------------------------------------------ grounding on the advised plan
+
+def _graded_advice(scenario_id, advice):
+    scenario = get_scenario(scenario_id)
+    book = scenario_book(scenario)
+    script = [{"tool_calls": [{"name": "quote_order", "args": {"side": scenario["side"],
+                                                               "notional_usd": scenario["notional"]}}]},
+              {"advice": advice}]
+    checks, _, _ = grade(scenario, run_advisor(ReplayTransport(script), book, scenario["side"],
+                                               scenario["notional"]), book)
+    return {c.name: c for c in checks}
+
+
+def test_citing_the_priced_schedule_is_grounded():
+    """The live run's cost misses were TWAPs citing their own sliced price: that is grounded."""
+    scenario = get_scenario("thin_book_oversized_buy")
+    tools = BookTools(scenario_book(scenario))
+    sliced = tools.compare_schedule("buy", scenario["notional"], 4)["sliced_net_bps"]
+    advice = _advice(strategy="twap", slices=4, horizon_seconds=600, expected_cost_bps=sliced)
+    assert _graded_advice("thin_book_oversized_buy", advice)["cost_grounded"].passed
+
+
+def test_a_cost_no_quote_gives_is_still_ungrounded():
+    check = _graded_advice("thin_book_oversized_buy", _advice(strategy="twap", slices=4, horizon_seconds=600,
+                                                              expected_cost_bps=3.0))["cost_grounded"]
+    assert not check.passed and "4 slices" in check.note and "one clip" in check.note
+
+
+def test_regrade_matches_a_fresh_grade(tmp_path):
+    """Re-grading recorded rows gives the scores a fresh run gives, with no model called."""
+    import evals.runner as runner
+    rows = run_suite(["rules", "ungrounded", "depth_blind"])
+    fresh = [(r["score"], r["critical_failures"]) for r in rows]
+    for row in rows:  # as a stale grader might have left them
+        row["score"] = 0.0
+        for check in row["checks"]:
+            if check["name"] == "cost_grounded":
+                check["passed"] = not check["passed"]
+    assert [(r["score"], r["critical_failures"]) for r in runner.regrade(rows)] == fresh
+
+
+def test_feedback_reaches_the_prompt():
+    seen = []
+
+    class Spy(ReplayTransport):
+        def propose(self, system_prompt, user_prompt, history):
+            seen.append(user_prompt)
+            return {"advice": _advice()}
+
+    run_advisor(Spy([]), DEEP, "buy", 1_000, feedback=["cited 9 bps; the plan prices at 4.2 bps"])
+    run_advisor(Spy([]), DEEP, "buy", 1_000)
+    assert "cited 9 bps" in seen[0] and "reviewer" in seen[0] and "reviewer" not in seen[1]

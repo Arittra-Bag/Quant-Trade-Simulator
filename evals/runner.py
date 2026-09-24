@@ -6,6 +6,7 @@ Eval runner.
     python -m evals.runner --markdown evals/RESULTS.md --json evals/results.json
     python -m evals.runner --live              # adds every live model whose key is set
     python -m evals.runner --live claude_haiku,gemini_flash --max-usd 0.50
+    python -m evals.runner --regrade evals/results.json --markdown evals/RESULTS.md
 
 Offline is the default and needs no API key and no network: the replay candidates play
 recorded scripts and the `rules` candidate is plain Python over the project's own cost
@@ -19,10 +20,12 @@ this can gate a merge. The replay candidates are expected to fail their target g
 so they never affect the exit code.
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
 import time
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,7 +37,7 @@ load_dotenv()
 
 from advisor.advisor import _status, run_advisor  # noqa: E402
 from evals.candidates import CANDIDATES, DESCRIPTIONS, REAL_CANDIDATES  # noqa: E402
-from evals.graders import grade, ground_truth  # noqa: E402
+from evals.graders import ADVICE_GRADERS, grade, ground_truth  # noqa: E402
 from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
 
 # A real candidate scoring below this is a regression worth failing CI over.
@@ -95,6 +98,7 @@ def run_one(candidate_name, scenario, live_transport=None):
     return {
         "candidate": candidate_name,
         "scenario": scenario["id"],
+        "book_sha": book_fingerprint(book),
         "score": round(score, 4),
         "critical_failures": critical,
         "checks": [c.to_dict() for c in checks],
@@ -137,6 +141,7 @@ def transport_usage(transport):
 def _skipped(name, scenario, reason):
     return {"candidate": name, "scenario": scenario["id"], "score": 0.0, "critical_failures": [],
             "checks": [], "advice": None, "tool_calls": [], "turns": 0, "latency_ms": 0.0,
+            "book_sha": book_fingerprint(scenario_book(scenario)),
             "model": "", "models_used": [], "errored": True, "setup_error": False, "errors": [reason],
             "tokens_in": 0, "tokens_out": 0, "cost_usd": None}
 
@@ -212,6 +217,47 @@ def _live_transport_factory(name):
     return lambda: GeminiTransport(client, [model], call_interval=LIVE_CALL_INTERVAL)
 
 
+def book_fingerprint(book):
+    """A short hash of a book, so a re-grade can tell whether the scenario book has changed."""
+    return hashlib.sha256(json.dumps(book, sort_keys=True).encode()).hexdigest()[:16]
+
+
+ADVICE_CHECKS = ("side_fidelity", "cost_grounded", "depth_honesty", "strategy_allowed")
+
+
+def regrade(rows):
+    """
+    Re-run the checks that read only the advice (side, cost, depth, strategy) on recorded
+    rows, so a grader fix reaches a paid live run without paying for it again. Checks over
+    the tool trace keep their recorded result: rows store tool names, not arguments.
+
+    A row is re-graded against today's scenario book, so a row whose book no longer matches
+    the fingerprint it was recorded with keeps its recorded verdict and says why.
+    """
+    scenarios = {s["id"]: s for s in SCENARIOS}
+    for row in rows:
+        scenario = scenarios.get(row["scenario"])
+        if scenario is None or row.get("errored"):
+            continue
+        book = scenario_book(scenario)
+        if row.get("book_sha") and row["book_sha"] != book_fingerprint(book):
+            row["regrade_skipped"] = "the scenario book changed since this row was recorded"
+            print(f"{row['candidate']} {row['scenario']}: not re-graded, {row['regrade_skipped']}", file=sys.stderr)
+            continue
+        truth = ground_truth(scenario, book)
+        recorded = SimpleNamespace(ok=row["advice"] is not None, advice=row["advice"])
+        fresh = {c.name: c for c in (g(scenario, recorded, truth) for g in ADVICE_GRADERS) if c is not None}
+        # An advice check the current graders no longer apply is dropped, not kept at its old verdict.
+        checks = [fresh.pop(c["name"]).to_dict() if c["name"] in fresh else c for c in row["checks"]
+                  if c["name"] in fresh or c["name"] not in ADVICE_CHECKS]
+        checks += [c.to_dict() for c in fresh.values()]
+        total = sum(c["weight"] for c in checks) or 1.0
+        row["checks"] = checks
+        row["score"] = round(sum(c["weight"] for c in checks if c["passed"]) / total, 4)
+        row["critical_failures"] = [c["name"] for c in checks if c["critical"] and not c["passed"]]
+    return rows
+
+
 def summarise(rows):
     """
     Per-candidate totals. A scenario where the provider failed before the model answered
@@ -273,12 +319,20 @@ def _latency(ms):
     return f"{ms / 1000:.1f} s" if ms >= 1000 else f"{ms:.1f} ms"
 
 
-def to_markdown(rows, summary):
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+def _stamp(when):
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def to_markdown(rows, summary, run_at=None):
+    """`run_at` is when a re-graded run was recorded; the header then says both dates."""
+    now = datetime.now(timezone.utc)
+    made = (f"Recorded on {_stamp(run_at)}, re-graded with the current graders by "
+            f"`python -m evals.runner --regrade evals/results.json --markdown evals/RESULTS.md` on {_stamp(now)}."
+            if run_at else f"Generated by `python -m evals.runner --markdown evals/RESULTS.md` on {_stamp(now)}.")
     out = [
         "# Advisor eval results",
         "",
-        f"Generated by `python -m evals.runner --markdown evals/RESULTS.md` on {ts}.",
+        made,
         f"{len(SCENARIOS)} scenarios x {len(summary)} candidates. Scores are weighted pass rates over "
         "the graders in `evals/graders.py`.",
         "",
@@ -381,6 +435,8 @@ def main(argv=None):
     parser.add_argument("--max-usd", type=float, default=LIVE_MAX_USD,
                         help=f"stop starting Claude scenarios after this much list-price spend "
                              f"(default {LIVE_MAX_USD:.2f})")
+    parser.add_argument("--regrade", metavar="RESULTS_JSON",
+                        help="re-grade a saved run's advice with the current graders; no model is called")
     parser.add_argument("--json", dest="json_path", help="write the full per-check results here")
     parser.add_argument("--markdown", dest="md_path", help="write the results table here")
     parser.add_argument("--quiet", action="store_true")
@@ -405,12 +461,16 @@ def main(argv=None):
         # A live run costs money and is hard to repeat; always keep the raw rows.
         args.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
 
+    run_at = None
+
     def save(rows):
         if args.json_path:
             # Write a temp file, then swap it in, so a cut-off save keeps the last good results.
             tmp = args.json_path + ".tmp"
+            now = datetime.now(timezone.utc).isoformat()
             with open(tmp, "w") as fh:
-                json.dump({"generated_at": datetime.now(timezone.utc).isoformat(),
+                json.dump({"generated_at": run_at.isoformat() if run_at else now,
+                           **({"regraded_at": now} if run_at else {}),
                            "scenarios": [s["id"] for s in SCENARIOS],
                            "summary": summarise(rows), "rows": rows}, fh, indent=2)
             os.replace(tmp, args.json_path)
@@ -419,12 +479,19 @@ def main(argv=None):
         print(f"Live run: {', '.join(live)} on {len(SCENARIOS)} scenarios; Claude spend capped at "
               f"${args.max_usd:.2f}, each model stops after {LIVE_RUN_BUDGET / 60:.0f} min.",
               file=sys.stderr, flush=True)
-    rows = run_suite(names, live=live, on_row=save if live else None, max_usd=args.max_usd)
+    if args.regrade:
+        with open(args.regrade) as fh:
+            saved = json.load(fh)
+        rows = regrade(saved["rows"])
+        run_at = datetime.fromisoformat(saved["generated_at"])
+        args.json_path = args.json_path or args.regrade
+    else:
+        rows = run_suite(names, live=live, on_row=save if live else None, max_usd=args.max_usd)
     summary = summarise(rows)
     save(rows)
     if args.md_path:
         with open(args.md_path, "w") as fh:
-            fh.write(to_markdown(rows, summary))
+            fh.write(to_markdown(rows, summary, run_at=run_at))
 
     if not args.quiet:
         width = max(len(n) for n in summary) if summary else 10

@@ -44,7 +44,7 @@ The application integrates Google's Gemini AI to provide market analysis and tra
 - Execution approach suggestions
 
 The Gemini integration:
-- Uses the `google-genai` SDK with `gemini-3.5-flash-lite` by default (override with `GEMINI_MODEL`). On the live eval it scored 95.3% in 6.1 s a scenario, against 3.8 Flash's 94.4% in 16.1 s with over twice the tokens, and it also has the larger free-tier quota (15 a minute, 500 a day)
+- Uses the `google-genai` SDK with `gemini-3.5-flash-lite` by default (override with `GEMINI_MODEL`). On the live eval it scored 98.4% in 6.1 s a scenario, against 3.8 Flash's 97.5% in 16.1 s with over twice the tokens, and it also has the larger free-tier quota (15 a minute, 500 a day)
 - Falls back to `gemini-3.8-flash` (override with `GEMINI_FALLBACK_MODELS`) if the default is retired, busy or out of quota
 - Caps advisor requests at `GEMINI_DAILY_REQUESTS` (default 150) per UTC day, because the demo is public and the key is paid; past the cap the panel answers from the rules and says so. Only requests that reach Gemini count, and the count is kept in `advisor_usage.json` so a restarted worker does not start the day again
 - That cap lives in the app, so a host that wipes its disk on redeploy resets it. The hard ceiling belongs on the key: in Google Cloud, lower the Generative Language API's requests-per-day quota for the key's project (APIs & Services, then the API's Quotas page), and add a billing budget alert
@@ -55,6 +55,15 @@ The Gemini integration:
 - Securely stores API credentials in environment variables
 - Formats orderbook data into structured prompts
 - Processes JSON responses for clean UI presentation
+
+### Execution Agent
+`agent/graph.py` is a LangGraph `StateGraph`: plan, price (fanned out with `Send`), critic, approve (`interrupt()`), execute, with an `InMemorySaver` checkpointer holding a run between the Plan click and the Approve click.
+- **Planner**: the Gemini advisor through `GeminiAnalyzer.analyze`, so it shares the daily cap, fallback and rules baseline. The first plan is paced like a Generate click; a revision is not, since it belongs to the same click, but it still counts against the daily cap. One Plan click is at most 3 advisor requests.
+- **Critic** (`agent/critic.py`): deterministic, using the rules in `advisor/policy.py` that the graders also use. Blocking: wrong side, a cited cost matching neither the advised plan's price nor the one-clip price (within 1 bps or 10%), a single clip into a book that cannot fill it, advice that never admits the order runs past the visible book, and any strategy but `wait` for an order over 10x the visible depth on its side. Notes: an alternative cheaper by more than 1 bps and 25%, and that a sliced cost assumes the book refills.
+- **Budget**: at most 2 revisions, and none once the run is 45 s old; a plan still blocked then reaches the approver marked unresolved.
+- **Approval**: refused if more than 120 s after planning. The checkpointer keeps the last 32 runs; an older or restart-lost run reports that it expired.
+- **Paper execution** (`agent/execution.py`): each child order walks the latest book from the feed. Slices go 0.25 s apart, not over the advised horizon. A passive limit is filled at its expected value: the queue model's maker share fills at the touch and the rest crosses. The reported cost is implementation shortfall against the arrival mid, fees included, in bps of the filled notional; permanent impact cannot be observed on a paper fill.
+- **Known gap**: `quote_order` prices a resting limit as if it crossed the spread, while the paper fill does not, so a passive plan tends to fill well under its quoted cost. Scoring fills against the recorded trade tape in `validation/` is the next step.
 
 ## Environment Configuration
 The application uses environment variables for sensitive configuration:

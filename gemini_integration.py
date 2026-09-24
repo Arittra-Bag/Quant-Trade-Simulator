@@ -17,8 +17,8 @@ always useful and the label says which produced the read.
 
 Model: GEMINI_MODEL (default gemini-3.5-flash-lite), falling through GEMINI_FALLBACK_MODELS
 (comma-separated, default gemini-3.8-flash) when a model is retired, busy or out of quota.
-Lite leads on the live eval (evals/RESULTS.md): 95.3% in 6.1 s and 6,170 tokens a scenario,
-against 3.8 Flash's 94.4% in 16.1 s and 14,661 tokens. The bigger model scored no better
+Lite leads on the live eval (evals/RESULTS.md): 98.4% in 6.1 s and 6,170 tokens a scenario,
+against 3.8 Flash's 97.5% in 16.1 s and 14,661 tokens. The bigger model scored no better
 and took over twice as long, so it is only the fallback. Because the demo
 is public and paid, GEMINI_DAILY_REQUESTS (default 150) caps advisor requests per UTC day. A model that
 fails is rested (see ModelCooldown) rather than tried first on every call. The API key is
@@ -95,7 +95,7 @@ class GeminiAnalyzer:
         """True when the live model is available. The panel works either way."""
         return self.client is not None
 
-    def _transport(self, side, quantity, order_type):
+    def _transport(self, side, quantity, order_type, paced=True):
         if self.client is None:
             return RuleTransport(side, quantity, order_type)
         # Pacing is shared across clicks and guarded, because Dash can run two callbacks at
@@ -103,7 +103,7 @@ class GeminiAnalyzer:
         # starting from whichever model last answered.
         with _PACE_LOCK:
             wait = self.min_interval - (time.time() - getattr(self, "_last_request", 0.0))
-            if wait > 0:
+            if paced and wait > 0:
                 raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
             # Requests still running count too: a click takes up to 40 s, and without this
             # several clicks could pass the check before any of them was counted.
@@ -151,9 +151,15 @@ class GeminiAnalyzer:
                     print(f"Could not save advisor usage: {e!r}", file=sys.stderr, flush=True)
 
     def analyze(self, orderbook_data, quantity, fees=0.0, slippage=0.0, impact=0.0,
-                side="buy", order_type="Market", fee_tier="Tier 1", volatility=0.01):
+                side="buy", order_type="Market", fee_tier="Tier 1", volatility=0.01, feedback=None,
+                paced=True):
         """
         Advise on one order against the current book. Never raises.
+
+        `feedback` is a reviewer's findings on a previous answer (the execution agent's
+        critic). A revision is part of the click that asked for the first answer, so it
+        passes `paced=False` and is not refused by the gap between clicks; it still counts
+        against the daily cap.
 
         `fees`, `slippage` and `impact` are accepted for backwards compatibility and are
         not used: the advisor quotes the order itself through `quote_order`, from the
@@ -170,10 +176,10 @@ class GeminiAnalyzer:
         quantity = float(quantity or 0) or 1.0
         age = _book_age(orderbook_data)
 
-        run = dict(order_type=order_type, fee_tier=fee_tier, volatility=volatility, book_age=age)
+        run = dict(order_type=order_type, fee_tier=fee_tier, volatility=volatility, book_age=age, feedback=feedback)
         failure, transport = None, None
         try:
-            transport = self._transport(side, quantity, order_type)
+            transport = self._transport(side, quantity, order_type, paced=paced)
             result = run_advisor(transport, orderbook_data, side, quantity, **run)
             if self.client is not None and not result.ok:
                 # Gemini did not produce usable advice: the provider failed, or its answer
