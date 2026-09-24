@@ -14,6 +14,7 @@ or QTS_BOOK_FILE), and any scenario name from `list_books` uses that recorded bo
 what the evals run on. A live book older than MAX_LIVE_AGE_S is refused rather than priced.
 """
 import json
+import math
 import os
 import sys
 import time
@@ -79,6 +80,16 @@ def _side(side):
     return side
 
 
+def _notional(notional_usd):
+    try:
+        notional = float(notional_usd)
+    except (TypeError, ValueError):
+        notional = float("nan")
+    if not math.isfinite(notional) or notional <= 0:
+        raise ToolError("notional_usd must be a positive number of USD")
+    return notional
+
+
 def _with_source(result, book, data, age):
     return {**result, "book": book, "venue": data.get("source") or ("scenario" if book != "live" else "unknown"),
             "symbol": data.get("symbol"), **({"book_age_s": age} if age is not None else {})}
@@ -108,7 +119,7 @@ def quote_order(side: str, notional_usd: float, order_type: str = "Market", book
                 fee_tier: str = "Tier 1", volatility: float = 0.01) -> dict:
     """Walk the book for an order: fees, slippage, impact and net cost in USD and bps, fill VWAP, and complete=false when it runs past the visible book."""
     tools, data, age = _tools(book, fee_tier, volatility)
-    return _with_source(tools.quote_order(_side(side), notional_usd, order_type), book, data, age)
+    return _with_source(tools.quote_order(_side(side), _notional(notional_usd), order_type), book, data, age)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -123,7 +134,7 @@ def compare_schedule(side: str, notional_usd: float, slices: int, book: str = "l
                      fee_tier: str = "Tier 1", volatility: float = 0.01) -> dict:
     """One clip against N equal slices. Assumes the book refills between slices, which validation/POSTTRADE.md shows holds on average and fails in the tail at size."""
     tools, data, age = _tools(book, fee_tier, volatility)
-    return _with_source(tools.compare_schedule(_side(side), notional_usd, slices), book, data, age)
+    return _with_source(tools.compare_schedule(_side(side), _notional(notional_usd), slices), book, data, age)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -136,18 +147,20 @@ def review_plan(side: str, notional_usd: float, plan: dict, book: str = "live",
     or wait), slices, horizon_seconds, expected_cost_bps, order_side, sentiment, confidence,
     urgency, analysis, reasoning, execution_approach and risks. Returns the plan as validated,
     every alternative priced against the same book, and the critic's findings; `approvable` is
-    false while any finding blocks.
+    false while any finding blocks or the schema had to repair the plan.
     """
-    side = _side(side)
+    side, notional = _side(side), _notional(notional_usd)
     data, age = _book(book)
     advice, problems = validate_advice(plan, expected_side=side)
     if advice is None:
         return _with_source({"approvable": False, "schema_errors": problems, "findings": [], "priced": []},
                             book, data, age)
-    order = {"side": side, "notional": float(notional_usd), "fee_tier": fee_tier, "volatility": volatility}
+    order = {"side": side, "notional": notional, "fee_tier": fee_tier, "volatility": volatility}
     priced = [price_plan(order, data, p) for p in plans_to_price(advice)]
     findings = review(order, data, advice, priced)
-    return _with_source({"approvable": not blocking(findings), "findings": findings, "priced": priced,
+    # A plan the schema had to repair is not the plan that was submitted, so it cannot be
+    # approved as submitted: the client resubmits the repaired `plan`.
+    return _with_source({"approvable": not blocking(findings) and not problems, "findings": findings, "priced": priced,
                          "schema_repairs": problems, "plan": advice}, book, data, age)
 
 

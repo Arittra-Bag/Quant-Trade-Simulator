@@ -108,3 +108,25 @@ def test_a_client_over_stdio():
     assert not quote.is_error and json.loads(quote.content[0].text)["side"] == "sell"
     assert missing.is_error and "no live book" in missing.content[0].text
     assert report.contents[0].text.startswith("# Post-trade scoring")
+
+
+def test_a_non_positive_notional_is_a_tool_error_everywhere():
+    for tool, args in (("quote_order", {"side": "buy"}), ("compare_schedule", {"side": "buy", "slices": 4}),
+                       ("review_plan", {"side": "buy", "plan": _advice()})):
+        for bad in (0, -5, float("nan")):
+            with pytest.raises(ToolError, match="positive"):
+                asyncio.run(srv.server.call_tool(tool, {**args, "notional_usd": bad, "book": "thin"}))
+
+
+def test_a_repaired_plan_is_not_approvable_as_submitted():
+    book = load_book("deep_tight")
+    advice = run_advisor(RuleTransport("buy", 1_000, "Market"), book, "buy", 1_000).advice
+    out = _call("review_plan", side="buy", notional_usd=1_000, book="deep_tight", plan={**advice, "urgency": "yolo"})
+    assert out["schema_repairs"] and out["approvable"] is False
+
+
+def test_a_schedule_beyond_the_priceable_slice_count_is_capped_and_says_so():
+    plan = _advice(strategy="twap", slices=100, horizon_seconds=600)
+    out = _call("review_plan", side="buy", notional_usd=400_000, book="thin", plan=plan)
+    assert out["plan"]["slices"] == 20 and any("above the 20" in p for p in out["schema_repairs"])
+    assert [p["label"] for p in out["priced"] if p["advised"]] == ["TWAP x20"] and out["approvable"] is False
