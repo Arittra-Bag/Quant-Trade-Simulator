@@ -845,7 +845,7 @@ def test_a_run_without_advice_is_not_called_a_validation_failure(monkeypatch):
     pytest.importorskip("google.genai")
     analyzer = _live_analyzer(_client([]), models=("m",))
     junk = type("T", (), {"name": "gemini", "model": "m", "propose": lambda self, *a: "not a turn"})()
-    monkeypatch.setattr(analyzer, "_transport", lambda *a: junk)
+    monkeypatch.setattr(analyzer, "_transport", lambda *a, **k: junk)
     result = analyzer.analyze(DEEP, 1_000, side="buy")
     assert result["success"] and result["source"] == "baseline"
     assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
@@ -1007,3 +1007,16 @@ def test_the_spend_cap_does_not_stop_gemini(monkeypatch):
     rows = runner.run_suite([], live=["claude_haiku", "gemini_flash"], max_usd=0.10)
     gemini = [r for r in rows if r["candidate"] == "gemini_flash"]
     assert gemini and not any("spend cap" in e for r in gemini for e in r["errors"])
+
+
+def test_feedback_reaches_the_prompt():
+    seen = []
+
+    class Spy(ReplayTransport):
+        def propose(self, system_prompt, user_prompt, history):
+            seen.append(user_prompt)
+            return {"advice": _advice()}
+
+    run_advisor(Spy([]), DEEP, "buy", 1_000, feedback=["cited 9 bps; the plan prices at 4.2 bps"])
+    run_advisor(Spy([]), DEEP, "buy", 1_000)
+    assert "cited 9 bps" in seen[0] and "reviewer" in seen[0] and "reviewer" not in seen[1]
