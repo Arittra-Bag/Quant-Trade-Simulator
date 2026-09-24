@@ -92,3 +92,22 @@ def test_idle_desk_sends_only_the_clock_after_the_first_paint(painter, monkeypat
 def test_paint_only_rejects_unknown_outputs():
     with pytest.raises(KeyError):
         app.paint_only({"no-such.children": 1})
+
+
+def test_a_failed_paint_still_answers(painter, monkeypatch):
+    """The browser waits for feed-line before its next poll, so the painter must not raise."""
+    write_book, paint = painter
+    write_book()
+
+    def broken(*_):
+        raise ValueError("bad book")
+
+    monkeypatch.setattr(app, "compute", broken)
+    out = paint()
+    assert sent(out) == {"feed-line.data", "painted.data"}
+    assert out["painted.data"] is None and "Retrying" in out["feed-line.data"]["text"]
+
+
+def test_paint_all_requires_every_output():
+    with pytest.raises(KeyError):
+        app.paint_all({"feed-line.data": {}})

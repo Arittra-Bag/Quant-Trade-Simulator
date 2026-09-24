@@ -14,17 +14,31 @@ class FakeRequest:
 
 def test_only_bundles_get_a_cache_key():
     bundle = FakeRequest("GET", "/_dash-component-suites/plotly/package_data/plotly.min.v7_1_0m1.js")
-    assert app.bundle_cache_key(bundle) == bundle.full_path
+    assert app.bundle_cache_key(bundle) == "bundle:" + bundle.path
     assert app.bundle_cache_key(FakeRequest("POST", "/_dash-update-component")) == ""
     assert app.bundle_cache_key(FakeRequest("GET", "/")) == ""
 
 
-def test_cache_never_stores_an_empty_key():
+def test_cache_stores_only_bundles():
     cache = app.StaticBundleCache()
     cache.set("br;", b"poll")
     assert cache.get("br;") is None
-    cache.set("br;/bundle.js?v=1", b"js")
-    assert cache.get("br;/bundle.js?v=1") == b"js"
+    cache.set("br;bundle:/a.js", b"js")
+    assert cache.get("br;bundle:/a.js") == b"js"
+
+
+def test_query_strings_share_one_entry():
+    plain = FakeRequest("GET", "/_dash-component-suites/dash/a.js", "v=1")
+    other = FakeRequest("GET", "/_dash-component-suites/dash/a.js", "x=2")
+    assert app.bundle_cache_key(plain) == app.bundle_cache_key(other)
+
+
+def test_cache_is_capped():
+    cache = app.StaticBundleCache()
+    for i in range(cache.MAX_ENTRIES + 10):
+        cache.set(f"br;bundle:/{i}.js", b"js")
+    assert cache.get("br;bundle:/0.js") is None
+    assert cache.get(f"br;bundle:/{cache.MAX_ENTRIES + 9}.js") == b"js"
 
 
 def test_bundles_are_served_compressed():
