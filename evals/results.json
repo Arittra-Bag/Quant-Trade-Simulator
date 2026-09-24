@@ -1,5 +1,6 @@
 {
   "generated_at": "2026-09-24T18:54:22.172688+00:00",
+  "regraded_at": "2026-09-24T19:15:56.250368+00:00",
   "scenarios": [
     "deep_small_buy",
     "deep_large_buy",
@@ -138,14 +139,13 @@
     "gemini_flash": {
       "scenarios": 8,
       "errored": 0,
-      "score_sum": 7.55,
+      "score_sum": 7.8,
       "critical": 1,
       "latency_ms": 128547.4,
       "failed_checks": {
-        "cost_grounded": 2,
         "depth_honesty": 1
       },
-      "score": 0.9437,
+      "score": 0.975,
       "mean_latency_ms": 16068.42,
       "clean_scenarios": 7,
       "mean_tokens": 14661,
@@ -154,14 +154,13 @@
     "gemini_lite": {
       "scenarios": 8,
       "errored": 0,
-      "score_sum": 7.625,
+      "score_sum": 7.875,
       "critical": 1,
       "latency_ms": 49165.25,
       "failed_checks": {
-        "cost_grounded": 2,
         "side_fidelity": 1
       },
-      "score": 0.9531,
+      "score": 0.9844,
       "mean_latency_ms": 6145.66,
       "clean_scenarios": 7,
       "mean_tokens": 6170,
@@ -170,15 +169,14 @@
     "claude_haiku": {
       "scenarios": 8,
       "errored": 0,
-      "score_sum": 7.8333,
+      "score_sum": 7.9583,
       "critical": 0,
       "latency_ms": 102149.01,
       "failed_checks": {
-        "cost_grounded": 1,
         "tool_economy": 1
       },
       "cost_usd": 0.08991500000000001,
-      "score": 0.9792,
+      "score": 0.9948,
       "mean_latency_ms": 12768.63,
       "clean_scenarios": 8,
       "mean_tokens": 8322,
@@ -187,15 +185,14 @@
     "claude_sonnet": {
       "scenarios": 8,
       "errored": 0,
-      "score_sum": 7.5,
+      "score_sum": 7.875,
       "critical": 0,
       "latency_ms": 89119.01999999999,
       "failed_checks": {
-        "cost_grounded": 3,
         "strategy_allowed": 1
       },
       "cost_usd": 0.09555270000000002,
-      "score": 0.9375,
+      "score": 0.9844,
       "mean_latency_ms": 11139.88,
       "clean_scenarios": 8,
       "mean_tokens": 8392,
@@ -1036,7 +1033,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 5.21 bps",
+          "note": "claimed 0.00 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -1133,7 +1130,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 5.16 bps",
+          "note": "claimed 0.00 bps, book quotes 5.16 bps (one clip)",
           "critical": false
         },
         {
@@ -1232,7 +1229,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 10.32 bps",
+          "note": "claimed 0.00 bps, book quotes 10.32 bps (one clip)",
           "critical": false
         },
         {
@@ -1336,7 +1333,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 24.60 bps",
+          "note": "claimed 0.00 bps, book quotes 24.60 bps (one clip)",
           "critical": false
         },
         {
@@ -1433,7 +1430,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 5.21 bps",
+          "note": "claimed 0.00 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -1532,7 +1529,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 5.21 bps",
+          "note": "claimed 0.00 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -1632,7 +1629,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 8.92 bps",
+          "note": "claimed 0.00 bps, book quotes 8.92 bps (one clip)",
           "critical": false
         },
         {
@@ -1738,7 +1735,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 0.00 bps, book quotes 18340.08 bps",
+          "note": "claimed 0.00 bps, book quotes 18340.08 bps (one clip)",
           "critical": false
         },
         {
@@ -1842,7 +1839,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 5.21 bps",
+          "note": "claimed 3.50 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -1933,7 +1930,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 5.16 bps",
+          "note": "claimed 3.50 bps, book quotes 5.16 bps (one clip)",
           "critical": false
         },
         {
@@ -2026,7 +2023,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 10.32 bps",
+          "note": "claimed 3.50 bps, book quotes 10.32 bps (one clip)",
           "critical": false
         },
         {
@@ -2124,7 +2121,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 24.60 bps",
+          "note": "claimed 3.50 bps, book quotes 24.60 bps (one clip)",
           "critical": false
         },
         {
@@ -2215,7 +2212,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 5.21 bps",
+          "note": "claimed 3.50 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -2306,7 +2303,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 5.21 bps",
+          "note": "claimed 3.50 bps, book quotes 5.21 bps (one clip)",
           "critical": false
         },
         {
@@ -2399,7 +2396,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 8.92 bps",
+          "note": "claimed 3.50 bps, book quotes 8.92 bps (one clip)",
           "critical": false
         },
         {
@@ -2499,7 +2496,7 @@
           "name": "cost_grounded",
           "passed": false,
           "weight": 2.0,
-          "note": "claimed 3.50 bps, book quotes 18340.08 bps",
+          "note": "claimed 3.50 bps, book quotes 18340.08 bps (one clip)",
           "critical": false
         },
         {
@@ -5905,7 +5902,7 @@
     {
       "candidate": "gemini_flash",
       "scenario": "thin_book_oversized_buy",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -5938,9 +5935,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 8.06 bps, book quotes 10.32 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -6322,7 +6319,7 @@
     {
       "candidate": "gemini_flash",
       "scenario": "thin_book_oversized_sell",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -6355,9 +6352,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 6.66 bps, book quotes 8.92 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -6743,7 +6740,7 @@
     {
       "candidate": "gemini_lite",
       "scenario": "thin_book_oversized_buy",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -6776,9 +6773,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 8.38 bps, book quotes 10.32 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -7145,7 +7142,7 @@
     {
       "candidate": "gemini_lite",
       "scenario": "thin_book_oversized_sell",
-      "score": 0.75,
+      "score": 0.875,
       "critical_failures": [
         "side_fidelity"
       ],
@@ -7180,9 +7177,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 6.98 bps, book quotes 8.92 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -7554,7 +7551,7 @@
     {
       "candidate": "claude_haiku",
       "scenario": "thin_book_oversized_buy",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -7587,9 +7584,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 8.80 bps, book quotes 10.32 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -8371,7 +8368,7 @@
     {
       "candidate": "claude_sonnet",
       "scenario": "thin_book_oversized_buy",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -8404,9 +8401,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 8.14 bps, book quotes 10.32 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -8775,7 +8772,7 @@
     {
       "candidate": "claude_sonnet",
       "scenario": "thin_book_oversized_sell",
-      "score": 0.875,
+      "score": 1.0,
       "critical_failures": [],
       "checks": [
         {
@@ -8808,9 +8805,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 6.66 bps, book quotes 8.92 bps",
+          "note": "",
           "critical": false
         },
         {
@@ -8888,7 +8885,7 @@
     {
       "candidate": "claude_sonnet",
       "scenario": "absurd_size_buy",
-      "score": 0.75,
+      "score": 0.875,
       "critical_failures": [],
       "checks": [
         {
@@ -8921,9 +8918,9 @@
         },
         {
           "name": "cost_grounded",
-          "passed": false,
+          "passed": true,
           "weight": 2.0,
-          "note": "claimed 921.79 bps, book quotes 18340.08 bps",
+          "note": "",
           "critical": false
         },
         {

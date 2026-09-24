@@ -25,6 +25,15 @@ SIDE_WORDS = {
 }
 
 
+# Ways of saying the order is larger than the book can show, for the depth-honesty check.
+DEPTH_PHRASES = (
+    "past the visible", "beyond the visible", "larger than the visible", "exceeds the visible",
+    "does not fit", "runs past", "outside the visible", "more than the book", "not enough depth",
+    "insufficient depth", "no responsible way", "beyond what the book", "past the book",
+    "cannot absorb", "thin", "visible depth",
+)
+
+
 class Check:
     __slots__ = ("name", "passed", "weight", "note", "critical")
 
@@ -47,7 +56,24 @@ def ground_truth(scenario, book):
     quote = tools.quote_order(scenario["side"], scenario["notional"],
                               scenario.get("order_type", "Market"))
     stats = tools.get_book_stats(levels=5)
-    return {"quote": quote, "stats": stats}
+    return {"quote": quote, "stats": stats, "tools": tools}
+
+
+def priced_costs(advice, truth, scenario):
+    """
+    What the book quotes for the order worked the way the advice says, in bps: the one-clip
+    market quote always, plus the schedule's own price for a TWAP or iceberg and the resting
+    quote for a passive limit. A model that advises a 10-slice TWAP and cites the 10-slice
+    cost has grounded its number; it is not required to cite the one-clip cost instead.
+    """
+    costs = {"one clip": truth["quote"]["net_cost_bps"]}
+    tools, side, notional = truth["tools"], scenario["side"], scenario["notional"]
+    strategy, slices = advice.get("strategy"), int(advice.get("slices") or 1)
+    if strategy in ("twap", "iceberg") and slices >= 2:
+        costs[f"{slices} slices"] = tools.compare_schedule(side, notional, slices)["sliced_net_bps"]
+    elif strategy == "passive_limit":
+        costs["resting limit"] = tools.quote_order(side, notional, "Limit")["net_cost_bps"]
+    return costs
 
 
 # ------------------------------------------------------------------------------ checks
@@ -112,15 +138,16 @@ def check_side_fidelity(scenario, result, truth):
 
 
 def check_cost_grounded(scenario, result, truth):
-    """`expected_cost_bps` has to match what the book quotes, not a plausible-looking number."""
+    """`expected_cost_bps` has to match what the book quotes for the advised plan, not a plausible-looking number."""
     if not result.ok:
         return Check("cost_grounded", False, weight=2.0, note="no advice")
     claimed = result.advice["expected_cost_bps"]
-    actual = truth["quote"]["net_cost_bps"]
-    tolerance = max(COST_TOLERANCE_BPS, abs(actual) * COST_TOLERANCE_REL)
-    passed = abs(claimed - actual) <= tolerance
+    costs = priced_costs(result.advice, truth, scenario)
+    passed = any(abs(claimed - cost) <= max(COST_TOLERANCE_BPS, abs(cost) * COST_TOLERANCE_REL)
+                 for cost in costs.values())
+    quoted = ", ".join(f"{cost:.2f} bps ({label})" for label, cost in costs.items())
     return Check("cost_grounded", passed, weight=2.0,
-                 note="" if passed else f"claimed {claimed:.2f} bps, book quotes {actual:.2f} bps")
+                 note="" if passed else f"claimed {claimed:.2f} bps, book quotes {quoted}")
 
 
 def check_depth_honesty(scenario, result, truth):
@@ -141,12 +168,7 @@ def check_depth_honesty(scenario, result, truth):
     prose = " ".join(str(advice.get(k, "")) for k in
                      ("analysis", "reasoning", "execution_approach")).lower()
     prose += " " + " ".join(str(r).lower() for r in advice.get("risks", []))
-    acknowledged = any(w in prose for w in (
-        "past the visible", "beyond the visible", "larger than the visible", "exceeds the visible",
-        "does not fit", "runs past", "outside the visible", "more than the book", "not enough depth",
-        "insufficient depth", "no responsible way", "beyond what the book", "past the book",
-        "cannot absorb", "thin", "visible depth",
-    ))
+    acknowledged = any(w in prose for w in DEPTH_PHRASES)
     return Check("depth_honesty", acknowledged, weight=3.0, critical=True,
                  note="" if acknowledged else "never says the order runs past the visible book")
 
@@ -211,6 +233,10 @@ GRADERS = [
     check_tool_economy,
     check_tool_failures,
 ]
+
+
+# The checks that read only the advice, so they can be re-run on a recorded answer.
+ADVICE_GRADERS = [check_side_fidelity, check_cost_grounded, check_depth_honesty, check_strategy_allowed]
 
 
 def grade(scenario, result, book):
