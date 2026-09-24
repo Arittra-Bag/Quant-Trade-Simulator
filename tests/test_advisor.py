@@ -9,6 +9,7 @@ is the loop's handling of that shape, not the real API's behaviour.
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -786,6 +787,24 @@ def test_an_invalid_gemini_answer_falls_back_to_the_rules():
     result = _live_analyzer(client, models=("m",)).analyze(DEEP, 1_000, side="buy")
     assert result["success"] and result["source"] == "baseline"
     assert result["notice"] == "Rules-based read: Gemini's answer did not pass validation."
+
+
+def test_a_rejected_request_is_not_called_a_validation_failure():
+    pytest.importorskip("google.genai")
+    client = _client([_BadRequest()])
+    result = _live_analyzer(client, models=("m",)).analyze(DEEP, 1_000, side="buy")
+    assert result["success"] and result["source"] == "baseline"
+    assert result["notice"] == "Rules-based read: Gemini is unavailable right now."
+
+
+def test_a_sub_second_budget_is_not_lifted_past_the_deadline():
+    pytest.importorskip("google.genai")
+    from google.genai import types
+    transport = GeminiTransport(_client([]), ["m"], deadline_s=40, call_timeout_s=20)
+    transport.begin()
+    transport._deadline = time.monotonic() + 0.5
+    with pytest.raises(TimeoutError):
+        transport._within_deadline(types.GenerateContentConfig())
 
 
 def test_a_spent_budget_does_not_hide_the_models_own_error(monkeypatch):

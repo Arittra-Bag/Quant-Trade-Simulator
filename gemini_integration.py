@@ -36,8 +36,8 @@ import time
 
 from dotenv import load_dotenv
 
-from advisor.advisor import (GeminiTransport, ModelCooldown, ModelsResting, RateLimited, RuleTransport,
-                             is_daily_quota, is_quota, is_timeout, is_upstream, run_advisor)
+from advisor.advisor import (AdviceInvalid, GeminiTransport, ModelCooldown, ModelsResting, RateLimited,
+                             RuleTransport, is_daily_quota, is_quota, is_timeout, is_upstream, run_advisor)
 from advisor.schema import strategy_label
 
 load_dotenv()
@@ -125,7 +125,8 @@ class GeminiAnalyzer:
             if self.client is not None and not result.ok:
                 # Gemini did not produce usable advice: the provider failed, or its answer
                 # failed to parse or validate. Either way the rules can still answer.
-                failure = result.exception or ValueError(result.errors[0] if result.errors else "no advice")
+                # Without an exception, the run ended on what Gemini sent back.
+                failure = result.exception or AdviceInvalid(result.errors[0] if result.errors else "no advice")
         except Exception as e:  # the panel must never take the page down
             if not is_upstream(e):
                 print(f"Advisor failed: {e!r}", file=sys.stderr, flush=True)
@@ -206,7 +207,7 @@ def gemini_notice(error, min_interval=MIN_INTERVAL):
         why = "Gemini took too long to answer"
     elif code == 503:
         why = "Gemini is overloaded right now"
-    elif not is_upstream(error):
+    elif isinstance(error, AdviceInvalid):
         why = "Gemini's answer did not pass validation"
     else:
         why = "Gemini is unavailable right now"

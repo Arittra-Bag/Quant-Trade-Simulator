@@ -278,6 +278,10 @@ class ModelsResting(RateLimited):
     """Every model is cooling down after a failure, so the request was not sent."""
 
 
+class AdviceInvalid(ValueError):
+    """The model answered, but its answer could not be parsed or failed validation."""
+
+
 class ModelCooldown:
     """
     Which models to leave alone for now, shared by every request in the process.
@@ -472,9 +476,12 @@ class GeminiTransport(Transport):
         left = self._deadline - time.monotonic()
         if left <= 0:
             raise TimeoutError(f"the {self.deadline_s:.0f}s budget for this request ran out")
-        timeout = left if self.call_timeout_s is None else min(left, self.call_timeout_s)
+        timeout_ms = int((left if self.call_timeout_s is None else min(left, self.call_timeout_s)) * 1000)
+        if timeout_ms < 1000:
+            # Lifting a sub-second remainder to the 1 s floor would run the call past the deadline.
+            raise TimeoutError(f"the {self.deadline_s:.0f}s budget for this request ran out")
         from google.genai import types
-        call = config.model_copy(update={"http_options": types.HttpOptions(timeout=max(1000, int(timeout * 1000)))})
+        call = config.model_copy(update={"http_options": types.HttpOptions(timeout=timeout_ms)})
         return call, self.call_timeout_s is not None and left < self.call_timeout_s
 
     def propose(self, system_prompt, user_prompt, history):
@@ -582,8 +589,11 @@ def _parse_json(text):
         text = text[text.find("{"):]
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError("no JSON object in response")
-    return json.loads(text[start:end + 1])
+        raise AdviceInvalid("no JSON object in response")
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError as e:
+        raise AdviceInvalid(f"response is not valid JSON: {e}") from e
 
 
 # ------------------------------------------------------------------------------- driver

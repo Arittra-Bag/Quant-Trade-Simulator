@@ -132,9 +132,9 @@ the desk is built to stay responsive on both:
 - **Threaded worker.** Start, Stop and the advisor never wait behind the polls.
 - **Advisor quota.** Generate is locked while a request is running and requests are spaced
   at least 5 s apart. Flash Lite leads (500 requests a day free, against 20 for 3.8 Flash).
-  A model that runs out of quota, is overloaded or times out is rested (until the daily reset,
-  for Google's retry delay, or 30 s) instead of being tried first on every call, and a click
-  has a 40 s budget. When Gemini cannot answer, the panel gives the rules-based read and says
+  A model that fails is rested instead of being tried first on every call: until midnight
+  Pacific for a spent daily quota, for Google's retry delay (or 60 s) for a per-minute quota,
+  and 30 s when overloaded or timed out. A click has a 40 s budget. When Gemini cannot answer, the panel gives the rules-based read and says
   why, rather than an error.
 
 ## Notes
