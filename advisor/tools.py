@@ -12,6 +12,7 @@ tool call has no side effects and an eval can replay one deterministically.
 """
 import json
 
+from advisor.schema import MAX_SLICES
 from fee_model import calculate_fees
 from models import (book_stats, estimate_market_impact, estimate_slippage,
                     predict_maker_taker, visible_depth_usd, walk_book)
@@ -217,7 +218,7 @@ class BookTools:
     def compare_schedule(self, side, notional_usd, slices):
         side = "sell" if str(side).lower() == "sell" else "buy"
         notional = max(float(notional_usd), 0.0)
-        slices = max(2, min(int(slices or 2), 20))
+        slices = max(2, min(int(slices or 2), MAX_SLICES))
         if notional <= 0:
             return {"error": "notional_usd must be positive"}
 

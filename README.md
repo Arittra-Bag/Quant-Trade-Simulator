@@ -160,6 +160,36 @@ windows on each side, so 28 samples per strategy and size ([report](validation/P
 
 LangGraph is imported on the first **Plan**, not at start-up; it adds about 33 MB then.
 
+## MCP server
+
+`mcp_server.py` puts the desk's tools in front of any MCP client, so a model outside this app
+can price orders against the live book and have its plan checked by the agent's critic:
+
+| Tool | What it returns |
+| --- | --- |
+| `list_books` | Whether the live book is available and fresh, and the recorded scenario books |
+| `book_stats` | Spread, imbalance, microprice and visible depth |
+| `quote_order` | Fees, slippage, impact and net cost for an order, and whether the book can fill it |
+| `depth_profile` | Cumulative USD level by level on the side an order would take |
+| `compare_schedule` | One clip against N slices |
+| `review_plan` | The plan validated against the advisor's schema, every alternative priced, the critic's findings, and `approvable` |
+
+Every tool is read-only: nothing places or stages an order, and the server needs no keys. The
+live book is the one the app's feed writes, and it is refused once it is over 30 s old rather
+than priced stale. The eval results and the post-trade report are exposed as resources. It
+loads neither the web app nor LangGraph.
+
+```bash
+pip install -r requirements-dev.txt
+python mcp_server.py        # stdio
+```
+
+Client configuration:
+
+```json
+{"mcpServers": {"quant-trade-simulator": {"command": "python", "args": ["/path/to/Quant-Trade-Simulator/mcp_server.py"]}}}
+```
+
 ## AI advisor evals
 
 The advisor is a tool-calling loop: the model prices the order with the same cost functions
@@ -214,9 +244,10 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-262 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
+275 tests, fully offline: every venue parser, the cost models, the CSV and Excel exports, the
 advisor loop and both model transports against mocked APIs, the eval graders, the execution
-agent's graph, critic and paper fills, and the feed client driven against local WebSocket
+agent's graph, critic and paper fills, post-trade scoring, the MCP server over a real stdio
+session, and the feed client driven against local WebSocket
 servers, including the case where a venue accepts the connection but never sends a book,
 which must trigger fallback. CI runs the same
 suite on Python 3.11 and 3.12 on every pull request and on every push to `main`, plus an
@@ -233,7 +264,8 @@ import check that the app loads with no feed and no API key.
 | `visualizations.py` | Depth, cost-stack and latency charts |
 | `gemini_integration.py` | The AI panel: Gemini advisor with fallback, daily cap and rules baseline |
 | `advisor/` | Tool-calling advisor loop, tools, schema, Gemini and Claude transports |
-| `agent/` | Execution agent: LangGraph graph, critic, paper execution, planners |
+| `agent/` | Execution agent: LangGraph graph, critic, pricing, paper execution, planners |
+| `mcp_server.py` | MCP server: the desk's tools and the critic, read-only, over stdio |
 | `evals/` | Scenarios, graders, replay fixtures, the eval runner and the critic eval |
 | `export.py` | CSV and Excel export of the current book |
 | `validation/` | Records books and the public trade tape; scores predicted cost, and the agent's plans (`posttrade.py`), against it |

@@ -24,6 +24,10 @@ STRATEGIES = (
 
 URGENCIES = ("low", "medium", "high")
 
+# compare_schedule prices at most this many slices, so a plan asking for more could not be
+# priced as presented.
+MAX_SLICES = 20
+
 ADVICE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -152,6 +156,9 @@ def validate_advice(raw, expected_side=None):
     if strategy in _MULTI_CLIP and slices < 2:
         errors.append(f"strategy {strategy} needs at least 2 slices, got {slices}")
         slices = 2
+    if slices > MAX_SLICES:
+        errors.append(f"slices {slices} above the {MAX_SLICES} the schedule can be priced at")
+        slices = MAX_SLICES
 
     horizon, ok = _num(raw.get("horizon_seconds"), 0.0)
     if not ok:

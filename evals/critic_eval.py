@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent.critic import blocking, review  # noqa: E402
-from agent.graph import plans_to_price, price_plan  # noqa: E402
+from agent.pricing import plans_to_price, price_plan  # noqa: E402
 from evals.candidates import CANDIDATES, REAL_CANDIDATES  # noqa: E402
 from evals.runner import LIVE_CANDIDATES, regrade, run_suite  # noqa: E402
 from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
