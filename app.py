@@ -498,6 +498,18 @@ app.layout = html.Div([
                                                className="muted"), id="gemini-analysis", className="ai-body"),
                             type="dot", color="#ffb000"),
             ], extra=html.Button("Generate", id="generate-analysis-button", className="btn btn-ghost btn-sm")),
+
+            panel("Execution agent", [
+                dcc.Loading(html.Div(html.Span(
+                    "Plan the order: the advisor proposes, every alternative is priced, a critic checks the "
+                    "plan against the book, and nothing is sent until you approve it. Fills are paper.",
+                    className="muted"), id="agent-body", className="ai-body"), type="dot", color="#ffb000"),
+                html.Div([
+                    html.Button("Approve", id="agent-approve-button", className="btn btn-sm btn-approve"),
+                    html.Button("Reject", id="agent-reject-button", className="btn btn-ghost btn-sm"),
+                ], id="agent-actions", className="agent-actions", style={"display": "none"}),
+                dcc.Store(id="agent-thread"),
+            ], extra=html.Button("Plan", id="agent-plan-button", className="btn btn-ghost btn-sm")),
         ], className="col col-center"),
 
         # ---------------- right: ladder
@@ -1107,6 +1119,165 @@ def generate_gemini_analysis(_, quantity, volatility, fee_tier, side):
         html.P(f"Tools used: {', '.join(result.get('tool_calls', [])) or 'none'} · book age {result.get('book_age', '?')}",
                className="muted mono"),
     ])
+
+
+# ----------------------------------------------------------------------------- execution agent
+_agent = None
+_agent_lock = threading.Lock()
+AGENT_PACE_S = 0.25   # seconds between a schedule's paper slices: the horizon, compressed for a demo
+AGENT_DEADLINE_S = 45  # past this, a blocked plan goes to the approver rather than round again
+
+
+def get_agent():
+    """The execution agent, built on first use so LangGraph is only imported when someone plans."""
+    global _agent
+    with _agent_lock:
+        if _agent is None:
+            from agent.graph import ExecutionAgent
+            from agent.planners import analyzer_planner
+            _agent = ExecutionAgent(analyzer_planner(gemini_analyzer), book_source=lambda: orderbook_data,
+                                    pace_s=AGENT_PACE_S, deadline_s=AGENT_DEADLINE_S)
+        return _agent
+
+
+AGENT_STATUS = {
+    "awaiting_approval": ("Awaiting approval", "warn"),
+    "executed": ("Executed (paper)", "pos"),
+    "rejected": ("Rejected", "muted"),
+    "expired": ("Expired: plan again", "muted"),
+    "failed": ("No plan", "neg"),
+}
+
+
+def _trace_line(trace):
+    """The graph's path as one line: consecutive price branches collapse to 'price x4'."""
+    parts, i = [], 0
+    while i < len(trace):
+        step = trace[i]
+        if step["node"] == "price":
+            n = 0
+            while i + n < len(trace) and trace[i + n]["node"] == "price":
+                n += 1
+            parts.append(f"price x{n}")
+            i += n
+            continue
+        parts.append(f"{step['node']} {step['ms'] / 1000:.1f}s" if step["ms"] >= 100 else step["node"])
+        i += 1
+    return " \u2192 ".join(parts)
+
+
+def render_agent(view):
+    """The agent panel for one run's view."""
+    from advisor.schema import strategy_label
+    label, tone = AGENT_STATUS.get(view["status"], (view["status"], "muted"))
+    if view["status"] == "expired" and not view.get("advice"):
+        return html.Span("That plan is no longer held (it expired or the server restarted). Plan again.",
+                         className="muted")
+    advice, meta = view.get("advice") or {}, view.get("advisor") or {}
+    rows = [html.P(meta["notice"], className="warn ai-notice") if meta.get("notice") else None]
+    if not advice:
+        rows.append(html.P("; ".join(meta.get("errors") or ["The advisor returned no plan."]), className="warn"))
+        return html.Div(rows)
+    revisions = view.get("revisions", 0)
+    rows.append(html.Div([
+        html.Span(label, className=f"tag {tone}"),
+        html.Span(strategy_label(advice), className="ai-strategy"),
+        html.Span(f"{advice.get('expected_cost_bps', 0):.2f} bps planned", className="muted mono"),
+        html.Span(f"{meta.get('model', '')} · {revisions} revision{'s' if revisions != 1 else ''}",
+                  className="muted mono"),
+    ], className="ai-head"))
+    rows.append(html.P(_trace_line(view.get("trace", [])), className="muted mono agent-trace"))
+
+    priced = sorted(view.get("priced", []), key=lambda p: p["cost_bps"])
+    rows.append(html.Table([
+        html.Thead(html.Tr([html.Th("Plan"), html.Th("Cost bps"), html.Th("Book fills it")])),
+        html.Tbody([html.Tr([
+            html.Td(("\u25b8 " if p["advised"] else "") + p["label"], className="agent-advised" if p["advised"] else ""),
+            html.Td(f"{p['cost_bps']:.2f}", className="mono"),
+            html.Td("yes" if p["complete"] else "no, runs past it", className="" if p["complete"] else "warn"),
+        ]) for p in priced]),
+    ], className="agent-table"))
+
+    findings = view.get("findings", [])
+    blocked = [f for f in findings if f["severity"] == "block"]
+    if blocked:
+        rows.append(html.P(f"Unresolved after {revisions} revision{'s' if revisions != 1 else ''}: approve only "
+                           "if you disagree with the critic.", className="neg agent-finding"))
+    for f in findings:
+        rows.append(html.P([html.Strong("Blocked " if f["severity"] == "block" else "Note "), f["message"]],
+                           className=f"agent-finding {'neg' if f['severity'] == 'block' else 'muted'}"))
+    for past in view.get("rounds", [])[:-1]:
+        fixed = "; ".join(f["message"] for f in past["findings"] if f["severity"] == "block")
+        rows.append(html.P(f"Round {past['round']} sent back: {fixed}", className="muted agent-finding"))
+    if not findings and not view.get("rounds", [])[:-1]:
+        rows.append(html.P("Critic: nothing to flag.", className="muted agent-finding"))
+
+    result = view.get("execution")
+    if result and result.get("status") in ("filled", "partial"):
+        delta = result["vs_plan_bps"]
+        rows.append(html.P([
+            html.Strong("Filled "),
+            f"${result['filled_notional']:,.0f} in {result['slices']} slice{'s' if result['slices'] != 1 else ''} at "
+            f"{result['vwap']:,.6g} vs arrival mid {result['arrival_mid']:,.6g}: ",
+            html.Span(f"{result['shortfall_bps']:.2f} bps", className="mono"),
+            f" all in, {'+' if delta >= 0 else ''}{delta:.2f} bps against plan",
+            " (part of it priced past the visible book)" if result.get("beyond_visible_book") else "",
+            ".",
+        ]))
+    elif result:
+        rows.append(html.P(result.get("note", ""), className="muted"))
+    return html.Div(rows)
+
+
+@app.callback(
+    Output("agent-body", "children"),
+    Output("agent-thread", "data"),
+    Output("agent-actions", "style"),
+    Input("agent-plan-button", "n_clicks"),
+    State("quantity-input", "value"),
+    State("volatility-slider", "value"),
+    State("fee-tier-dropdown", "value"),
+    State("side-radio", "value"),
+    prevent_initial_call=True,
+    running=[(Output("agent-plan-button", "disabled"), True, False),
+             (Output("agent-plan-button", "children"), "Planning…", "Plan")],
+)
+def plan_execution(_, quantity, volatility, fee_tier, side):
+    hidden = {"display": "none"}
+    book = orderbook_data
+    if not book:
+        return html.Span("No book to plan against yet. Start a stream first.", className="warn"), None, hidden
+    order = {"side": side or "buy", "notional": float(quantity or 0) or 1.0, "order_type": "Market",
+             "fee_tier": fee_tier, "volatility": float(volatility or 0.01)}
+    try:
+        thread, view = get_agent().start(order, book)
+    except Exception as e:  # the panel must never take the page down
+        print(f"Execution agent failed: {e!r}", file=sys.stderr, flush=True)
+        return html.Span(f"Planning failed: {e}", className="neg"), None, hidden
+    waiting = view["status"] == "awaiting_approval"
+    return render_agent(view), thread if waiting else None, {} if waiting else hidden
+
+
+@app.callback(
+    Output("agent-body", "children", allow_duplicate=True),
+    Output("agent-thread", "data", allow_duplicate=True),
+    Output("agent-actions", "style", allow_duplicate=True),
+    Input("agent-approve-button", "n_clicks"),
+    Input("agent-reject-button", "n_clicks"),
+    State("agent-thread", "data"),
+    prevent_initial_call=True,
+    running=[(Output("agent-approve-button", "disabled"), True, False),
+             (Output("agent-reject-button", "disabled"), True, False)],
+)
+def decide_execution(_approve, _reject, thread):
+    if not thread:
+        return dash.no_update, None, {"display": "none"}
+    try:
+        view = get_agent().resume(thread, approved=ctx.triggered_id == "agent-approve-button")
+    except Exception as e:
+        print(f"Execution agent failed: {e!r}", file=sys.stderr, flush=True)
+        return html.Span(f"Execution failed: {e}", className="neg"), None, {"display": "none"}
+    return render_agent(view), None, {"display": "none"}
 
 
 @app.callback(

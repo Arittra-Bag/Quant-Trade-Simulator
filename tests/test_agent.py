@@ -90,6 +90,13 @@ def test_approval_resumes_the_saved_run_and_executes_once():
     assert [t["node"] for t in again["trace"]].count("execute") == 1
 
 
+def test_a_run_out_of_time_goes_to_the_human_without_revising():
+    order, book = _case("deep_small_buy")
+    planner = Scripted(_advice(expected_cost_bps=40.0))
+    _, view = ExecutionAgent(planner, deadline_s=-1).start(order, book)
+    assert len(planner.feedback) == 1 and view["status"] == "awaiting_approval" and blocking(view["findings"])
+
+
 def test_a_rejected_plan_is_not_executed():
     order, book = _case("deep_small_buy")
     agent = _rules_agent()
@@ -233,3 +240,40 @@ def test_analyzer_planner_maps_the_panel_result_and_does_not_pace_a_revision():
     plan(order, book, ["fix the cost"])
     assert out["advice"]["strategy"] == "immediate_market" and out["model"] == "gemini-3.5-flash-lite"
     assert calls[0]["paced"] and not calls[1]["paced"] and calls[1]["feedback"] == ["fix the cost"]
+
+
+# ------------------------------------------------------------------------------ panel
+
+def _text(component):
+    """All the text in a Dash component tree."""
+    if component is None:
+        return ""
+    if isinstance(component, (str, int, float)):
+        return str(component)
+    if isinstance(component, (list, tuple)):
+        return " ".join(_text(c) for c in component)
+    return _text(getattr(component, "children", None))
+
+
+def test_the_panel_renders_every_state_of_a_run():
+    import app
+    order, book = _case("deep_small_buy")
+    agent = _rules_agent()
+    thread, waiting = agent.start(order, book)
+    assert "Awaiting approval" in _text(app.render_agent(waiting))
+    done = _text(app.render_agent(agent.resume(thread, approved=True)))
+    assert "Executed (paper)" in done and "all in" in done and "approve" in done
+
+    blocked = ExecutionAgent(Scripted(_advice(expected_cost_bps=40.0))).start(order, book)[1]
+    text = _text(app.render_agent(blocked))
+    assert "Unresolved after 2 revisions" in text and "Round 1 sent back" in text
+
+    failed = ExecutionAgent(lambda o, b, f: {"advice": None, "errors": ["Gemini is down"]}).start(order, book)[1]
+    assert "Gemini is down" in _text(app.render_agent(failed))
+    assert "Plan again" in _text(app.render_agent({"status": "expired"}))
+
+
+def test_the_trace_collapses_parallel_branches():
+    import app
+    trace = [{"node": "plan", "ms": 6100.0}] + [{"node": "price", "ms": 0.3}] * 4 + [{"node": "critic", "ms": 0.2}]
+    assert app._trace_line(trace) == "plan 6.1s → price x4 → critic"

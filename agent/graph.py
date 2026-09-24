@@ -11,8 +11,8 @@ The execution agent: a LangGraph state machine from an order to a paper fill.
            each priced against the same book, fanned out with Send so every plan in the
            round is priced before the critic sees any of them.
 - critic   deterministic checks against the priced plans (agent/critic.py). A blocking
-           finding sends the plan back; after MAX_REVISIONS it goes to the human with the
-           findings unresolved and marked.
+           finding sends the plan back; after MAX_REVISIONS, or once the run has used its
+           time budget, it goes to the human with the findings unresolved and marked.
 - approve  interrupt(): the run stops, its state is saved by the checkpointer, and it
            resumes only when a human approves or rejects. An approval older than
            APPROVAL_TTL_S is refused, since the book it was priced on has moved.
@@ -45,6 +45,7 @@ DEFAULT_SLICES = (4, 10)
 class AgentState(TypedDict, total=False):
     order: dict
     book: dict
+    started_at: float
     round: int
     advice: dict
     advisor: dict
@@ -90,11 +91,12 @@ def price_plan(order, book, plan):
     return {**plan, "label": label, "cost_bps": round(cost, 4), "complete": bool(complete)}
 
 
-def build_graph(planner, book_source=None, pace_s=0.0):
+def build_graph(planner, book_source=None, pace_s=0.0, deadline_s=None):
     """
     `planner(order, book, feedback)` returns {"advice": dict or None, ...metadata}; it is
     the advisor, with whatever transport and fallback the caller wants. `book_source()`
-    returns the latest book for execution.
+    returns the latest book for execution. Past `deadline_s` seconds from the start, a
+    blocked plan goes to the human instead of going round again.
     """
 
     def plan(state):
@@ -134,7 +136,8 @@ def build_graph(planner, book_source=None, pace_s=0.0):
                 "trace": [_step("critic", started, f"{len(blocked)} blocking, {len(findings) - len(blocked)} to note")]}
 
     def after_critic(state):
-        if blocking(state["findings"]) and state["round"] <= MAX_REVISIONS:
+        out_of_time = deadline_s is not None and time.time() - state.get("started_at", time.time()) > deadline_s
+        if blocking(state["findings"]) and state["round"] <= MAX_REVISIONS and not out_of_time:
             return "plan"
         return "approve"
 
@@ -185,9 +188,9 @@ class ExecutionAgent:
     restart lost, reports status "expired".
     """
 
-    def __init__(self, planner, book_source=None, pace_s=0.0, max_runs=32):
+    def __init__(self, planner, book_source=None, pace_s=0.0, max_runs=32, deadline_s=None):
         self.saver = InMemorySaver()
-        self.graph = build_graph(planner, book_source, pace_s).compile(checkpointer=self.saver)
+        self.graph = build_graph(planner, book_source, pace_s, deadline_s).compile(checkpointer=self.saver)
         self.max_runs = max_runs
         self._runs = deque()
         self._lock = threading.Lock()
@@ -201,7 +204,7 @@ class ExecutionAgent:
             self._runs.append(thread_id)
             while len(self._runs) > self.max_runs:
                 self.saver.delete_thread(self._runs.popleft())
-        self.graph.invoke({"order": order, "book": book}, self._config(thread_id))
+        self.graph.invoke({"order": order, "book": book, "started_at": time.time()}, self._config(thread_id))
         return thread_id, self.view(thread_id)
 
     def resume(self, thread_id, approved):
