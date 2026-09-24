@@ -91,6 +91,7 @@ def run_one(candidate_name, scenario, live_transport=None):
         book_age="0.0s (recorded snapshot)",
     )
     checks, score, critical = grade(scenario, result, book)
+    setup = _setup_failure(result, live_transport)
     return {
         "candidate": candidate_name,
         "scenario": scenario["id"],
@@ -103,13 +104,30 @@ def run_one(candidate_name, scenario, live_transport=None):
         "latency_ms": round(result.latency_ms, 2),
         "model": result.model,
         "models_used": result.models_used,
-        "errored": result.upstream_error,
+        "errored": result.upstream_error or setup,
+        "setup_error": setup,
         "errors": result.errors,
         "tokens_in": sum(transport_usage(live_transport).get(k, 0) for k in
                          ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
         "tokens_out": transport_usage(live_transport).get("output_tokens", 0),
         "cost_usd": getattr(live_transport, "cost_usd", None),
     }
+
+
+# Refusals of the request itself: a bad key, a key without access, an unknown model.
+SETUP_CODES = {400, 401, 403, 404}
+
+
+def _setup_failure(result, transport):
+    """
+    The API refused the run's first call and no model ever answered, as with a key that is not
+    scoped to a workspace. That measures the setup, not the advisor, so the row is errored
+    instead of scored as a failed answer, and the candidate's other scenarios are not started.
+    """
+    if transport is None or result.exception is None or getattr(transport, "answered_by", None):
+        return False
+    status = getattr(result.exception, "code", None) or getattr(result.exception, "status_code", None)
+    return status in SETUP_CODES and not any(transport_usage(transport).values())
 
 
 def transport_usage(transport):
@@ -120,7 +138,7 @@ def transport_usage(transport):
 def _skipped(name, scenario, reason):
     return {"candidate": name, "scenario": scenario["id"], "score": 0.0, "critical_failures": [],
             "checks": [], "advice": None, "tool_calls": [], "turns": 0, "latency_ms": 0.0,
-            "model": "", "models_used": [], "errored": True, "errors": [reason],
+            "model": "", "models_used": [], "errored": True, "setup_error": False, "errors": [reason],
             "tokens_in": 0, "tokens_out": 0, "cost_usd": None}
 
 
@@ -143,9 +161,11 @@ def run_suite(candidate_names, live=(), on_row=None, max_usd=LIVE_MAX_USD):
             print(f"{name}: no API key set, skipped.", file=sys.stderr)
             continue
         # One transport per candidate, so call pacing carries across scenarios.
-        transport, started = factory(), time.time()
+        transport, started, setup_error = factory(), time.time(), None
         for i, scenario in enumerate(SCENARIOS, 1):
-            if time.time() - started > LIVE_RUN_BUDGET:
+            if setup_error:
+                row = _skipped(name, scenario, f"not run: the API refused the first call ({setup_error})")
+            elif time.time() - started > LIVE_RUN_BUDGET:
                 row = _skipped(name, scenario, f"not run: the {LIVE_RUN_BUDGET:.0f}s run budget was spent")
             elif LIVE_CANDIDATES[name][0] == "claude" and spent >= max_usd:  # the cap is Claude's
                 row = _skipped(name, scenario, f"not run: the ${max_usd:.2f} spend cap was reached")
@@ -154,6 +174,8 @@ def run_suite(candidate_names, live=(), on_row=None, max_usd=LIVE_MAX_USD):
                     transport.budget_usd = max_usd - spent  # checked before every call, not just here
                 row = run_one(name, scenario, live_transport=transport)
                 spent += row["cost_usd"] or 0.0
+                if row["setup_error"]:
+                    setup_error = row["errors"][0] if row["errors"] else "setup error"
             rows.append(row)
             state = "errored" if row["errored"] else f"{row['score'] * 100:.0f}%"
             cost = f", ${row['cost_usd']:.4f}" if row["cost_usd"] is not None else ""
