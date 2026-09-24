@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+from decimal import Decimal
 from importlib.metadata import PackageNotFoundError, version
 
 import websockets
@@ -181,6 +182,10 @@ class Venue:
         raise NotImplementedError
 
 
+class BookIntegrityError(ConnectionError):
+    """The venue's own check (sequence or checksum) says our copy of the book is wrong: resubscribe to the same venue."""
+
+
 class OKXVenue(Venue):
     """
     OKX `books`: a 400-level snapshot, then deltas. Each delta names the sequence it follows
@@ -201,6 +206,7 @@ class OKXVenue(Venue):
         self.ct_val = ct_val if ct_val is not None else okx_contract_value(symbol)
         self.channel = "books5" if OKXVenue._strikes.get(symbol, 0) >= self.CHECKSUM_STRIKES else "books"
         self._bids, self._asks, self._seq = {}, {}, None
+        self._normalise = None  # which number format OKX's checksum uses, once one has matched
 
     def subscribe_message(self):
         return {"op": "subscribe", "args": [{"channel": self.channel, "instId": self.venue_symbol}]}
@@ -225,16 +231,38 @@ class OKXVenue(Venue):
         return bids, asks
 
     @staticmethod
-    def checksum(bids, asks):
-        """OKX's checksum: CRC32 of the top 25 levels as bidPx:bidSz:askPx:askSz:..., signed."""
+    def _plain(value):
+        """A number string without trailing zeros or exponent: '12.50' -> '12.5', '3.0' -> '3'."""
+        text = format(Decimal(value).normalize(), "f")
+        return text
+
+    @staticmethod
+    def checksum(bids, asks, normalise=False):
+        """
+        OKX's checksum: CRC32 of the top 25 levels as bidPx:bidSz:askPx:askSz:..., signed.
+        With `normalise`, the numbers are written without trailing zeros, which is how some
+        OKX books render them for the checksum even when the wire strings carry them.
+        """
+        fmt = OKXVenue._plain if normalise else str
         parts = []
         for i in range(25):
             if i < len(bids):
-                parts += bids[i][:2]
+                parts += [fmt(bids[i][0]), fmt(bids[i][1])]
             if i < len(asks):
-                parts += asks[i][:2]
+                parts += [fmt(asks[i][0]), fmt(asks[i][1])]
         crc = zlib.crc32(":".join(parts).encode())
         return crc - (1 << 32) if crc >= (1 << 31) else crc
+
+    def _checksum_ok(self, bids, asks, expected):
+        """True if our book matches OKX's checksum in either number format; the one that matches is kept."""
+        forms = [self._normalise] if self._normalise is not None else [False, True]
+        for normalise in forms:
+            if self.checksum(bids, asks, normalise) == expected:
+                if self._normalise is None:
+                    self._normalise = normalise
+                    logger.info(f"OKX: checksum verified ({'normalised' if normalise else 'raw'} numbers)")
+                return True
+        return False
 
     def parse(self, msg):
         channel = msg.get("arg", {}).get("channel")
@@ -248,14 +276,17 @@ class OKXVenue(Venue):
                 self._bids, self._asks = {}, {}
             elif self._seq is None or data.get("prevSeqId") != self._seq:
                 self._strike()
-                raise ConnectionError(f"OKX: update out of sequence ({data.get('prevSeqId')} after {self._seq})")
+                raise BookIntegrityError(f"OKX: update out of sequence ({data.get('prevSeqId')} after {self._seq})")
             self._apply(self._bids, data.get("bids", []))
             self._apply(self._asks, data.get("asks", []))
             self._seq = data.get("seqId")
             bids, asks = self._sorted()
-            if "checksum" in data and self.checksum(bids, asks) != int(data["checksum"]):
+            if "checksum" in data and not self._checksum_ok(bids, asks, int(data["checksum"])):
                 self._strike()
-                raise ConnectionError("OKX: book checksum mismatch, resubscribing")
+                top = f"bid {bids[0][:2] if bids else None} ask {asks[0][:2] if asks else None}"
+                raise BookIntegrityError(f"OKX: checksum mismatch on {msg.get('action')} seq {data.get('seqId')}: "
+                                         f"okx {data['checksum']}, ours {self.checksum(bids, asks)} raw / "
+                                         f"{self.checksum(bids, asks, True)} normalised; {top}; {len(bids)}x{len(asks)} levels")
             if msg.get("action") == "update":
                 # Only a verified delta clears the strikes: every resubscribe starts from a
                 # snapshot that checks out, so resetting on snapshots would retry a broken
@@ -482,7 +513,10 @@ async def connect_and_save(symbol, output_file="latest_orderbook.json", update_i
         except asyncio.CancelledError:
             return
         except Exception as e:
-            worked = writer.status.get("source") == name and writer.status.get("state") == "live"
+            # A failed integrity check is our copy of the book, not the venue: resubscribe to the
+            # same venue (after enough strikes OKX drops to books5) rather than moving on.
+            worked = isinstance(e, BookIntegrityError) or (
+                writer.status.get("source") == name and writer.status.get("state") == "live")
             logger.warning(f"{name} failed: {e}")
             writer.write_status(state="reconnecting", error=f"{name}: {e}")
         if shutdown_flag:
