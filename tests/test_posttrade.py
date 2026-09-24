@@ -66,10 +66,18 @@ def test_volume_at_our_price_fills_us_only_after_the_queue_ahead():
     assert abs(s["realised_fill"] - 0.5) < 1e-6 and queue > 0
 
 
-def test_a_trade_through_our_price_fills_us_completely():
-    s = _passive([_trade(10, MID - 1.0, 0.001, "sell")])
-    assert s["realised_fill"] == 1.0
-    assert s["realised_bps"] < _passive([])["realised_bps"]  # resting and filling beats crossing
+def test_a_trade_through_our_price_counts_for_its_size_not_a_full_fill():
+    """One small print a tick through the bid must not fill $100k resting behind 2 BTC."""
+    assert _passive([_trade(10, MID - 1.0, 0.001, "sell")])["realised_fill"] == 0.0
+    big = _passive([_trade(10, MID - 1.0, 2.0 + 200_000 / (MID - 1.0), "sell")])
+    assert big["realised_fill"] == 1.0
+    assert big["realised_bps"] < _passive([])["realised_bps"]  # resting and filling beats crossing
+
+
+def test_the_same_tape_fills_a_bigger_order_less():
+    tape = [_trade(10, MID - 0.5, 2.0 + 100_000 / (MID - 0.5), "sell")]  # the queue, then $100k
+    assert _passive(tape, notional=100_000)["realised_fill"] == 1.0
+    assert abs(_passive(tape, notional=1_000_000)["realised_fill"] - 0.1) < 1e-6
 
 
 def test_buyers_do_not_fill_a_resting_buy():

@@ -127,20 +127,20 @@ scenario judgment the critic cannot see: a TWAP for a $1,000 order.
 ### The plans against a real tape
 
 `python -m validation.posttrade` replays the agent's plans over a recorded OKX book and trade
-tape. First recording: 15 minutes of BTC-USDT-SWAP (818 books, 19,027 trades), $250k orders,
-14 one-minute windows on each side, so 28 samples a strategy ([report](validation/POSTTRADE.md)):
+tape. First recording: 15 minutes of BTC-USDT-SWAP (818 books, 19,027 trades), 14 one-minute
+windows on each side, so 28 samples per strategy and size ([report](validation/POSTTRADE.md)):
 
-- **The queue model's fill rate is calibrated on average**: it predicted a mean maker share of
-  0.62 for a resting limit, and the tape filled 0.64. Per order it is all or nothing: the
-  median fill was 1.0 and the p10 was 0.
-- **Resting costs more than the paper fill says**: 4.63 bps realised against 3.14 on paper.
-  When the order did not fill, the price had moved away, and crossing after it cost about
-  10 bps (the p90). That is adverse selection, which an expected-value fill cannot see.
-- **The Limit quote overstates the cost**, at 5.08 bps against 4.63 realised: it charges the
-  taker fee on an order that mostly fills as maker.
-- **At $250k this book never tested the TWAP's refill assumption**: every slice filled at the
-  touch, so the cost is the 5 bps taker fee and the refill error is 0.03 bps. Larger sizes on
-  the same recording are one flag away (`--notional 250000,2500000,10000000`).
+- **Slicing assumes the book refills, and mostly it does.** For a 4-slice TWAP, realised minus
+  the full-refill prediction was 0.03 bps at $250k, 0.22 bps at $2.5M and 0.85 bps at $10M
+  (means), with a p90 of 3.35 bps at $10M: the assumption holds on average and fails in the tail.
+- **`compare_schedule` is close on average, for the wrong reason.** Its permanent-impact charge
+  (7.62 bps mean at $10M) happens to cover the refill shortfall (7.16 realised), since a paper
+  fill cannot observe permanent impact at all.
+- **At $250k the book never left the touch**: every slice paid the 5 bps taker fee and nothing
+  else, so small orders on BTC say nothing about refill.
+- **Passive-limit results are withdrawn** pending a re-score: the first scorer counted any print
+  through the touch as a full fill whatever the order's size, which the identical 0.643 fill at
+  $250k and $10M exposed. It now counts such a print for its own size.
 
 LangGraph is imported on the first **Plan**, not at start-up; it adds about 33 MB then.
 
