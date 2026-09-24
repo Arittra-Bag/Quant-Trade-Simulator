@@ -10,4 +10,5 @@ xlsxwriter==3.2.9
 python-dotenv==1.2.3
 gunicorn==26.2.0
 loguru==0.7.3
+langgraph==1.2.12  # the execution agent; imported only when it runs
 tzdata==2026.4  # midnight Pacific for the Gemini quota reset, on hosts without a tz database
