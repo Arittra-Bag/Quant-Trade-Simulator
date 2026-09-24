@@ -491,8 +491,10 @@ def test_adapter_keeps_the_legacy_wrapper_shape():
 
 
 def test_default_model_is_current():
+    """Lite leads: 15 calls a minute and 500 a day on the free tier, where 3.8 Flash allows 5 and 20."""
     import gemini_integration as gi
-    assert gi.MODEL == "gemini-3.8-flash" or os.environ.get("GEMINI_MODEL")
+    assert gi.MODEL == "gemini-3.5-flash-lite" or os.environ.get("GEMINI_MODEL")
+    assert "gemini-3.8-flash" in gi.FALLBACK_MODELS or os.environ.get("GEMINI_FALLBACK_MODELS")
 
 
 # --------------------------------------------------------------------------- UI formatting
