@@ -840,6 +840,7 @@ PAINT_OUTPUTS = [
     Output("painted", "data"),
 ]
 PAINT_KEYS = [f"{o.component_id}.{o.component_property}" for o in PAINT_OUTPUTS]
+PAINT_KEY_SET = frozenset(PAINT_KEYS)
 
 
 TILES = ("netcost", "slippage", "impact", "fees", "makertaker", "latency")
@@ -847,7 +848,7 @@ TILES = ("netcost", "slippage", "impact", "fees", "makertaker", "latency")
 
 def paint_only(values):
     """The painter's tuple with `values` (keyed "id.prop") set and everything else untouched."""
-    unknown = set(values) - set(PAINT_KEYS)
+    unknown = values.keys() - PAINT_KEY_SET
     if unknown:
         raise KeyError(f"not painter outputs: {sorted(unknown)}")
     return tuple(values[k] if k in values else dash.no_update for k in PAINT_KEYS)
@@ -855,7 +856,7 @@ def paint_only(values):
 
 def paint_all(values):
     """The painter's tuple for a full paint, which must set every output."""
-    missing = set(PAINT_KEYS) - set(values)
+    missing = PAINT_KEY_SET - values.keys()
     if missing:
         raise KeyError(f"full paint is missing: {sorted(missing)}")
     return paint_only(values)
