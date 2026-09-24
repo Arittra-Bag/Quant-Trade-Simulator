@@ -56,7 +56,10 @@ def side_drift(advice, side):
     return says_other and not says_side
 
 
+_DEPTH_RE = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in DEPTH_PHRASES) + r")\b")
+
+
 def admits_depth(advice):
-    """The advice says, somewhere, that the order is larger than the visible book."""
-    text = prose(advice, with_risks=True)
-    return any(phrase in text for phrase in DEPTH_PHRASES)
+    """The advice says, somewhere, that the order is larger than the visible book.
+    Whole words only: "thin" must not match "within" or "nothing"."""
+    return bool(_DEPTH_RE.search(prose(advice, with_risks=True)))

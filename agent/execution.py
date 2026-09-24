@@ -21,7 +21,9 @@ from models import book_stats, predict_maker_taker, walk_book
 
 
 def _child(book, side, notional, strategy, fee_tier, venue):
-    """Fill one child order against `book`. Returns the fill, or None when the book is empty."""
+    """Fill one child order against `book`. Returns the fill, or None when either side is empty."""
+    if not book or not book.get("bids") or not book.get("asks"):
+        return None
     stats = book_stats(book)
     if strategy == "passive_limit":
         maker = predict_maker_taker(book, notional, "Limit")
@@ -46,7 +48,7 @@ def execute(order, plan, arrival_book, book_source=None, pace_s=0.0, sleep=time.
     Work `plan` (the approved advice) for `order` and return the fills and the shortfall.
 
     `book_source()` returns the latest book, or None to reuse the last one; without it every
-    child fills against `arrival_book`.
+    child fills against `arrival_book`. A book for another symbol or venue is ignored.
     """
     side, notional = order["side"], float(order["notional"])
     strategy = plan["strategy"]
@@ -62,7 +64,11 @@ def execute(order, plan, arrival_book, book_source=None, pace_s=0.0, sleep=time.
     for i in range(slices):
         if i and pace_s:
             sleep(pace_s)
-        book = (book_source() if book_source else None) or book
+        latest = book_source() if book_source else None
+        # Only the same market: a stream restarted on another symbol or venue while the plan
+        # waited for approval must not fill this order against a different instrument.
+        if latest and all(latest.get(k) == arrival_book.get(k) for k in ("symbol", "source")):
+            book = latest
         fill = _child(book, side, notional / slices, strategy, fee_tier, venue)
         if fill is None:
             break

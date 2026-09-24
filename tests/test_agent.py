@@ -219,10 +219,10 @@ def test_critic_agrees_with_the_graders_on_the_recorded_run():
     import json
 
     from evals.critic_eval import RESULTS, compare, tally
-    from evals.runner import LIVE_CANDIDATES
+    from evals.runner import LIVE_CANDIDATES, regrade
     with open(RESULTS) as fh:
         rows = [r for r in json.load(fh)["rows"] if r["candidate"] in LIVE_CANDIDATES]
-    t = tally(compare(rows))
+    t = tally(compare(regrade(rows)))
     assert t["missed"] == 0 and t["false_alarms"] == 0 and t["caught"] == 3
 
 
@@ -280,3 +280,49 @@ def test_the_trace_collapses_parallel_branches():
     import app
     trace = [{"node": "plan", "ms": 6100.0}] + [{"node": "price", "ms": 0.3}] * 4 + [{"node": "critic", "ms": 0.2}]
     assert app._trace_line(trace) == "plan 6.1s → price x4 → critic"
+
+
+# ------------------------------------------------------------------------------ review fixes
+
+def test_depth_admission_matches_whole_words_only():
+    from advisor.policy import admits_depth
+    assert not admits_depth(_advice(analysis="Fills within the book; nothing to gain by waiting."))
+    assert admits_depth(_advice(risks=["The book is thin past the first levels."]))
+
+
+def test_a_one_sided_book_mid_schedule_stops_the_fills_without_raising():
+    order, book = _case("deep_large_buy")
+    books = iter([book, {**book, "asks": []}])
+    result = execute(order, _advice(strategy="twap", slices=4, horizon_seconds=600), book,
+                     book_source=lambda: next(books))
+    assert result["status"] == "partial" and result["slices"] == 1
+
+
+def test_a_book_for_another_market_is_not_filled_against():
+    order, book = _case("deep_large_buy")
+    other = {**book, "symbol": "ETH-USDT-SWAP", "asks": [[p / 20, s] for p, s in book["asks"]],
+             "bids": [[p / 20, s] for p, s in book["bids"]]}
+    result = execute(order, _advice(strategy="twap", slices=3, horizon_seconds=600), book,
+                     book_source=lambda: other)
+    assert result == execute(order, _advice(strategy="twap", slices=3, horizon_seconds=600), book)
+
+
+def test_regrade_drops_an_advice_check_that_no_longer_applies():
+    from evals.runner import regrade
+    row = run_suite_rows("rules", "deep_small_buy")
+    row["checks"].append({"name": "depth_honesty", "passed": False, "weight": 3.0, "note": "stale",
+                          "critical": True})
+    regraded = regrade([row])[0]
+    assert "depth_honesty" not in [c["name"] for c in regraded["checks"]] and regraded["score"] == 1.0
+
+
+def test_regrade_leaves_a_row_whose_book_changed():
+    from evals.runner import regrade
+    row = run_suite_rows("ungrounded", "deep_small_buy")
+    row["book_sha"], row["score"] = "0" * 16, 0.123
+    assert regrade([row])[0]["score"] == 0.123 and "book changed" in row["regrade_skipped"]
+
+
+def run_suite_rows(candidate, scenario_id):
+    from evals.runner import run_one
+    return run_one(candidate, get_scenario(scenario_id))
