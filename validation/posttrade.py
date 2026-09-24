@@ -16,9 +16,9 @@ of `notional` USD is worked three ways:
   assumption) and against the arrival mid (implementation shortfall, adding whatever the
   price did meanwhile).
 - **Passive limit**: rest the whole order at the touch for H seconds, behind the size
-  already queued there. It fills as the tape trades through that price: fully if any trade
-  prints beyond it, otherwise by the volume at the price in excess of the queue ahead. The
-  remainder crosses the book at t + H. Predicted three ways: the queue model's maker share,
+  already queued there. It fills from the volume the tape trades at that price or through it,
+  in excess of the queue ahead; a print through the price counts for its own size, not as a
+  full fill, since the recorded market never held our order. The remainder crosses the book at t + H. Predicted three ways: the queue model's maker share,
   `quote_order`'s Limit price, and the agent's paper fill (the expected-value fill).
 - **One clip** at t, as the reference: its prediction is the walk itself.
 
@@ -100,17 +100,16 @@ def score_passive(books, book_ts, trades, trade_ts, t0, side, notional, horizon,
     # Sellers hitting our bid (or buyers lifting our offer), at our price or through it.
     hitter = "sell" if side == "buy" else "buy"
     lo, hi = bisect.bisect_right(trade_ts, t0), bisect.bisect_right(trade_ts, t0 + horizon)
-    at_price, through = 0.0, False
+    # A trade through our price would have hit us first, but only for as much as it traded:
+    # the recording is of a market without our order in it, so a print one tick through
+    # says nothing about whether $10M resting at the touch would have been filled.
+    reached = 0.0
     for t in trades[lo:hi]:
         if t.get("side") != hitter:
             continue
-        beyond = t["px"] < touch if side == "buy" else t["px"] > touch
-        if beyond:
-            through = True
-            break
-        if t["px"] == touch:
-            at_price += t["px"] * t["sz"]
-    fill = 1.0 if through else min(max((at_price - queue_ahead) / notional, 0.0), 1.0)
+        if (t["px"] <= touch) if side == "buy" else (t["px"] >= touch):
+            reached += t["px"] * t["sz"]
+    fill = min(max((reached - queue_ahead) / notional, 0.0), 1.0)
 
     rest = notional * (1 - fill)
     crossed = walk_book(end, rest, side) if rest > 0 else None

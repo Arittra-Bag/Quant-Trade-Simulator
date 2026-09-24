@@ -68,7 +68,7 @@ The Gemini integration:
 ### Post-trade scoring
 `python -m validation.posttrade <recording>` replays the agent's plans over a recording from `validation/record.py`, in non-overlapping windows (default: $250k, 60 s, 4 slices, both sides):
 - **TWAP**: each slice walks the recorded book of its moment through the agent's paper executor. The prediction is the same slices walked against the arrival book, which is `compare_schedule`'s full-refill assumption; the difference, measured against each slice's own mid, is the refill error. The score against the arrival mid adds price drift.
-- **Passive limit**: the order rests at the touch behind the queue already there, fills from sellers (for a buy) printing at that price beyond the queue, or completely if a trade prints through it, and crosses the rest at the end. It is compared with the queue model's maker share, `quote_order`'s Limit price and the agent's expected-value paper fill.
+- **Passive limit**: the order rests at the touch behind the queue already there, fills from sellers (for a buy) printing at that price or through it, beyond the queue ahead, and crosses the rest at the end. A print through the price counts for its own size: the recording is of a market that never held our order. It is compared with the queue model's maker share, `quote_order`'s Limit price and the agent's expected-value paper fill.
 - The tape is polled, so a burst of more than 100 trades between polls is partly missed, and the queue ahead is assumed never to cancel; both make the realised passive fill a floor.
 
 ## Environment Configuration
