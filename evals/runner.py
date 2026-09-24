@@ -20,6 +20,7 @@ this can gate a merge. The replay candidates are expected to fail their target g
 so they never affect the exit code.
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -97,6 +98,7 @@ def run_one(candidate_name, scenario, live_transport=None):
     return {
         "candidate": candidate_name,
         "scenario": scenario["id"],
+        "book_sha": book_fingerprint(book),
         "score": round(score, 4),
         "critical_failures": critical,
         "checks": [c.to_dict() for c in checks],
@@ -139,6 +141,7 @@ def transport_usage(transport):
 def _skipped(name, scenario, reason):
     return {"candidate": name, "scenario": scenario["id"], "score": 0.0, "critical_failures": [],
             "checks": [], "advice": None, "tool_calls": [], "turns": 0, "latency_ms": 0.0,
+            "book_sha": book_fingerprint(scenario_book(scenario)),
             "model": "", "models_used": [], "errored": True, "setup_error": False, "errors": [reason],
             "tokens_in": 0, "tokens_out": 0, "cost_usd": None}
 
@@ -214,21 +217,39 @@ def _live_transport_factory(name):
     return lambda: GeminiTransport(client, [model], call_interval=LIVE_CALL_INTERVAL)
 
 
+def book_fingerprint(book):
+    """A short hash of a book, so a re-grade can tell whether the scenario book has changed."""
+    return hashlib.sha256(json.dumps(book, sort_keys=True).encode()).hexdigest()[:16]
+
+
+ADVICE_CHECKS = ("side_fidelity", "cost_grounded", "depth_honesty", "strategy_allowed")
+
+
 def regrade(rows):
     """
     Re-run the checks that read only the advice (side, cost, depth, strategy) on recorded
     rows, so a grader fix reaches a paid live run without paying for it again. Checks over
     the tool trace keep their recorded result: rows store tool names, not arguments.
+
+    A row is re-graded against today's scenario book, so a row whose book no longer matches
+    the fingerprint it was recorded with keeps its recorded verdict and says why.
     """
     scenarios = {s["id"]: s for s in SCENARIOS}
     for row in rows:
         scenario = scenarios.get(row["scenario"])
         if scenario is None or row.get("errored"):
             continue
-        truth = ground_truth(scenario, scenario_book(scenario))
+        book = scenario_book(scenario)
+        if row.get("book_sha") and row["book_sha"] != book_fingerprint(book):
+            row["regrade_skipped"] = "the scenario book changed since this row was recorded"
+            print(f"{row['candidate']} {row['scenario']}: not re-graded, {row['regrade_skipped']}", file=sys.stderr)
+            continue
+        truth = ground_truth(scenario, book)
         recorded = SimpleNamespace(ok=row["advice"] is not None, advice=row["advice"])
         fresh = {c.name: c for c in (g(scenario, recorded, truth) for g in ADVICE_GRADERS) if c is not None}
-        checks = [fresh.pop(c["name"]).to_dict() if c["name"] in fresh else c for c in row["checks"]]
+        # An advice check the current graders no longer apply is dropped, not kept at its old verdict.
+        checks = [fresh.pop(c["name"]).to_dict() if c["name"] in fresh else c for c in row["checks"]
+                  if c["name"] in fresh or c["name"] not in ADVICE_CHECKS]
         checks += [c.to_dict() for c in fresh.values()]
         total = sum(c["weight"] for c in checks) or 1.0
         row["checks"] = checks

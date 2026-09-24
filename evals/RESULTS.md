@@ -1,6 +1,6 @@
 # Advisor eval results
 
-Recorded on 2026-09-24 18:54 UTC, re-graded with the current graders by `python -m evals.runner --regrade evals/results.json --markdown evals/RESULTS.md` on 2026-09-24 19:15 UTC.
+Recorded on 2026-09-24 18:54 UTC, re-graded with the current graders by `python -m evals.runner --regrade evals/results.json --markdown evals/RESULTS.md` on 2026-09-24 19:39 UTC.
 8 scenarios x 11 candidates. Scores are weighted pass rates over the graders in `evals/graders.py`.
 
 ## Scoreboard
