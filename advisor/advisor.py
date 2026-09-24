@@ -555,29 +555,34 @@ def _function_calls(response):
 
 
 def _model_unavailable(error):
-    code = getattr(error, "code", None)
+    code = _status(error)
     text = str(error)
     return code == 404 or "NOT_FOUND" in text or "no longer available" in text
 
 
-TRANSIENT_CODES = (429, 500, 502, 503, 504)
+TRANSIENT_CODES = (429, 500, 502, 503, 504, 529)  # 529: Anthropic's "overloaded"
+
+
+def _status(error):
+    """HTTP status of a provider error: `code` on google-genai, `status_code` on anthropic."""
+    return getattr(error, "code", None) or getattr(error, "status_code", None)
 
 
 def is_timeout(error):
     """The call ran out of time: our HTTP timeout, the request budget, or the server's 504."""
     return (isinstance(error, TimeoutError) or "Timeout" in type(error).__name__
-            or "timed out" in str(error).lower() or getattr(error, "code", None) == 504)
+            or "timed out" in str(error).lower() or _status(error) == 504)
 
 
 def is_quota(error):
     """A 429: the model's per-minute or per-day quota is spent."""
-    return getattr(error, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(error)
+    return _status(error) == 429 or "RESOURCE_EXHAUSTED" in str(error)
 
 
 def is_transient(error):
-    """A provider-side failure: quota, overload, a 5xx, or a call that timed out."""
-    return (getattr(error, "code", None) in TRANSIENT_CODES or is_quota(error) or is_timeout(error)
-            or "UNAVAILABLE" in str(error))
+    """A provider-side failure: quota, overload, a 5xx, a dropped connection, or a timeout."""
+    return (_status(error) in TRANSIENT_CODES or is_quota(error) or is_timeout(error)
+            or "UNAVAILABLE" in str(error) or "APIConnectionError" in type(error).__name__)
 
 
 def is_upstream(error):
