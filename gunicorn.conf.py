@@ -9,11 +9,15 @@ Sized for one small instance (a free tier's 512 MB and a fraction of a CPU):
   behind them, as it did on the default single-threaded worker.
 - Keep-alive longer than the poll interval, so polls reuse one connection.
 
-The bind address comes from $PORT when it is set, as gunicorn does by default.
+Binds to $PORT when it is set, as hosts like Render set it, and to 8050 like `python app.py`
+otherwise.
 """
 import os
 
-workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
+bind = [f"0.0.0.0:{os.environ.get('PORT', '8050')}"]
+# Fixed, not read from WEB_CONCURRENCY: some hosts set that, and a second worker would split
+# the advisor's rate limiter and the cached book in two.
+workers = 1
 worker_class = "gthread"
 threads = int(os.environ.get("GUNICORN_THREADS", "8"))
 keepalive = 30
