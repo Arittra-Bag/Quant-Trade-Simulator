@@ -653,15 +653,21 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(_) {
-        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0};
+        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0, wait: 5000};
         const now = Date.now();
-        // A hidden tab polls every 5 s instead of twice a second: enough to keep the
-        // volatility estimate fed, little enough to spare the server's one CPU.
+        // A hidden tab polls every 5 s instead of twice a second, to spare the server's CPU.
         const gap = document.hidden ? 5000 : 500;
-        // Wait for the answer, but give up on one lost for 5 s (a dropped connection or a
-        // restarted worker) so polling never stalls for long.
-        if ((s.inflight && now - s.sent < 5000) || now - s.sent < gap) {
+        if (now - s.sent < gap) {
             return window.dash_clientside.no_update;
+        }
+        if (s.inflight) {
+            // Wait for the answer. One that never comes (a dropped connection, a restarted
+            // worker) is given up after `wait`, which doubles each time, so a server slower
+            // than any fixed limit still gets a poll through instead of having each dropped.
+            if (now - s.sent < s.wait) {
+                return window.dash_clientside.no_update;
+            }
+            s.wait = Math.min(s.wait * 2, 60000);
         }
         s.inflight = true;
         s.sent = now;
@@ -677,8 +683,9 @@ app.clientside_callback(
     function(_) {
         // The poll has answered. Marked here, not in the pacer above, because an input on
         // the pacer from the poll's own output would be a loop Dash never fires.
-        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0};
+        const s = window.qtsPoll = window.qtsPoll || {inflight: false, sent: 0, wait: 5000};
         s.inflight = false;
+        s.wait = 5000;
         return Date.now();
     }
     """,
