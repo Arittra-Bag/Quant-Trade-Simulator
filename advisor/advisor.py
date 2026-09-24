@@ -277,16 +277,14 @@ class GeminiTransport(Transport):
     One request is always several calls (each tool turn, the closing turn, the schema
     turn), so a per-call limit refuses every request on its second call.
 
-    Transient provider errors (429 quota, 5xx such as 503 "high demand") are retried
-    `max_retries` times on the same model, waiting as long as the API asks or backing
-    off, and then fall through to the next model. With `max_retries=0`, which is what a
-    UI callback wants, a 503 goes straight to the fallback. Only a retired model moves
-    the default for later requests; a transient fallback is used for that call alone,
-    and `answered_by` records which model answered each call of the current request.
+    Nothing is retried. A busy model (503) or a spent quota (429) passes that one call to
+    the next model, which on the free tier has its own quota; if none answers, the error
+    ends the request. Only a retired model moves the default for later requests, and
+    `answered_by` records which model answered each call of the current request.
 
-    `call_interval` spaces every API call, retries included, by at least that many
-    seconds. It is for batch runs on a quota (the free tier allows 5 calls a minute per
-    model), and sleeps rather than refuses.
+    `call_interval` spaces API calls by at least that many seconds, for batch runs on the
+    free tier (5 calls a minute per model). The client itself should carry a timeout, so
+    one unanswered call cannot hang a run.
 
     NOT EXERCISED AGAINST THE LIVE API in this repository's tests or CI: there is no key
     in that environment. Everything offline runs through ReplayTransport.
@@ -294,15 +292,11 @@ class GeminiTransport(Transport):
 
     name = "gemini"
 
-    MAX_RETRY_DELAY = 60.0
-    BACKOFF_SECONDS = 5.0
-
-    def __init__(self, client, models, min_interval=0.0, max_retries=0, call_interval=0.0):
+    def __init__(self, client, models, min_interval=0.0, call_interval=0.0):
         self.client = client
         self.models = list(models)
         self.model = self.models[0] if self.models else ""
         self.min_interval = min_interval
-        self.max_retries = max_retries
         self.call_interval = call_interval
         self.answered_by = []
         self._last_request = 0.0
@@ -329,25 +323,18 @@ class GeminiTransport(Transport):
         candidates = [self.model] + [m for m in self.models if m != self.model]
         last = None
         for i, model in enumerate(candidates):
-            attempt = 0
-            while True:
-                self._pace()
-                try:
-                    response = self.client.models.generate_content(model=model, contents=contents, config=config)
-                except Exception as e:
-                    last = e
-                    if is_transient(e) and attempt < self.max_retries:
-                        attempt += 1
-                        backoff = self.BACKOFF_SECONDS * 2 ** (attempt - 1)
-                        time.sleep(min(_retry_delay(e, backoff), self.MAX_RETRY_DELAY))
-                        continue
-                    if (_model_unavailable(e) or is_transient(e)) and i + 1 < len(candidates):
-                        break  # next model
-                    raise
-                if i == 0 or _model_unavailable(last):
-                    self.model = model  # a retired model is not coming back; a busy one is
-                self.answered_by.append(model)
-                return response
+            self._pace()
+            try:
+                response = self.client.models.generate_content(model=model, contents=contents, config=config)
+            except Exception as e:
+                last = e
+                if (_model_unavailable(e) or is_transient(e)) and i + 1 < len(candidates):
+                    continue  # next model
+                raise
+            if i == 0 or _model_unavailable(last):
+                self.model = model  # a retired model is not coming back; a busy one is
+            self.answered_by.append(model)
+            return response
         raise last
 
     def propose(self, system_prompt, user_prompt, history):
@@ -426,29 +413,17 @@ TRANSIENT_CODES = (429, 500, 502, 503, 504)
 
 
 def is_transient(error):
-    """A provider-side failure worth retrying: quota, overload, or a 5xx."""
+    """A provider-side failure: quota, overload, a 5xx, or a call that timed out."""
     code = getattr(error, "code", None)
     text = str(error)
-    return code in TRANSIENT_CODES or "RESOURCE_EXHAUSTED" in text or "UNAVAILABLE" in text
+    return (code in TRANSIENT_CODES or "RESOURCE_EXHAUSTED" in text or "UNAVAILABLE" in text
+            or "timed out" in text.lower() or "Timeout" in type(error).__name__)
 
 
 def is_upstream(error):
     """The provider, or our own request throttle, stopped the run before the model answered."""
     return is_transient(error) or (isinstance(error, RuntimeError) and str(error).startswith("Rate limited"))
 
-
-def _retry_delay(error, default=10.0):
-    """Seconds the API asked us to wait, from its RetryInfo detail when it sent one."""
-    details = getattr(error, "details", None)
-    if isinstance(details, dict):
-        for item in (details.get("error") or {}).get("details") or []:
-            delay = item.get("retryDelay") if isinstance(item, dict) else None
-            if isinstance(delay, str) and delay.endswith("s"):
-                try:
-                    return max(float(delay[:-1]), 0.0)
-                except ValueError:
-                    pass
-    return default
 
 
 def _parse_json(text):

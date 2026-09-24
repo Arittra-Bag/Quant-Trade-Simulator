@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,9 +31,13 @@ from evals.scenarios import SCENARIOS, scenario_book  # noqa: E402
 # A real candidate scoring below this is a regression worth failing CI over.
 SCORE_FLOOR = 0.90
 
-# Seconds between live API calls. The free tier allows 5 calls a minute per model and one
-# scenario is several calls, so the default keeps a whole run under that. Set 0 on a paid key.
+# Live runs are built for the Gemini free tier: 5 calls a minute per model.
+# Seconds between live API calls, which keeps a run under that limit.
 LIVE_CALL_INTERVAL = float(os.environ.get("GEMINI_CALL_INTERVAL", "13"))
+# Seconds before one API call is abandoned, so an unanswered call cannot hang the run.
+LIVE_CALL_TIMEOUT = float(os.environ.get("GEMINI_CALL_TIMEOUT", "60"))
+# Seconds a whole live run may take. Scenarios not started by then are marked errored.
+LIVE_RUN_BUDGET = float(os.environ.get("GEMINI_RUN_BUDGET", "900"))
 
 
 def _fill_quote_placeholder(transport, scenario, book):
@@ -80,7 +85,14 @@ def run_one(candidate_name, scenario, live_transport=None):
     }
 
 
-def run_suite(candidate_names, live=False):
+def _skipped(name, scenario, reason):
+    return {"candidate": name, "scenario": scenario["id"], "score": 0.0, "critical_failures": [],
+            "checks": [], "advice": None, "tool_calls": [], "turns": 0, "latency_ms": 0.0,
+            "model": "", "models_used": [], "errored": True, "errors": [reason]}
+
+
+def run_suite(candidate_names, live=False, on_row=None):
+    """Run every candidate on every scenario. `on_row` is called with each row as it lands."""
     rows, live_transport_factory = [], None
     if live:
         live_transport_factory = _live_transport_factory()
@@ -90,10 +102,22 @@ def run_suite(candidate_names, live=False):
             print("No GEMINI_API_KEY; skipping the live candidate.", file=sys.stderr)
 
     for name in candidate_names:
+        live_run = name == "gemini_live"
         # One live transport for the whole run, so call pacing carries across scenarios.
-        transport = live_transport_factory() if name == "gemini_live" else None
-        for scenario in SCENARIOS:
-            rows.append(run_one(name, scenario, live_transport=transport))
+        transport = live_transport_factory() if live_run else None
+        started = time.time()
+        for i, scenario in enumerate(SCENARIOS, 1):
+            if live_run and time.time() - started > LIVE_RUN_BUDGET:
+                row = _skipped(name, scenario, f"not run: the {LIVE_RUN_BUDGET:.0f}s run budget was spent")
+            else:
+                row = run_one(name, scenario, live_transport=transport)
+            rows.append(row)
+            if live_run:
+                state = "errored" if row["errored"] else f"{row['score'] * 100:.0f}%"
+                print(f"[{i}/{len(SCENARIOS)}] gemini_live {scenario['id']}: {state} "
+                      f"({row['latency_ms'] / 1000:.0f}s)", file=sys.stderr, flush=True)
+            if on_row:
+                on_row(rows)
     return rows
 
 
@@ -104,13 +128,12 @@ def _live_transport_factory():
         return None
     from advisor.advisor import GeminiTransport
     from google import genai
-    client = genai.Client(api_key=key)
+    from google.genai import types
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=int(LIVE_CALL_TIMEOUT * 1000)))
     models = [os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")]
     models += [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
                if m.strip()]
-    # Paced per call rather than refused per request, and transient errors (429, 503)
-    # retried and then passed to the fallback model instead of being scored.
-    return lambda: GeminiTransport(client, models, max_retries=3, call_interval=LIVE_CALL_INTERVAL)
+    return lambda: GeminiTransport(client, models, call_interval=LIVE_CALL_INTERVAL)
 
 
 def summarise(rows):
@@ -263,14 +286,22 @@ def main(argv=None):
         # A live run costs money and is hard to repeat; always keep the raw rows.
         args.json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.json")
 
-    rows = run_suite(names, live=args.live)
-    summary = summarise(rows)
+    def save(rows):
+        if args.json_path:
+            # Write a temp file, then swap it in, so a cut-off save keeps the last good results.
+            tmp = args.json_path + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump({"generated_at": datetime.now(timezone.utc).isoformat(),
+                           "scenarios": [s["id"] for s in SCENARIOS],
+                           "summary": summarise(rows), "rows": rows}, fh, indent=2)
+            os.replace(tmp, args.json_path)
 
-    if args.json_path:
-        with open(args.json_path, "w") as fh:
-            json.dump({"generated_at": datetime.now(timezone.utc).isoformat(),
-                       "scenarios": [s["id"] for s in SCENARIOS],
-                       "summary": summary, "rows": rows}, fh, indent=2)
+    if args.live:
+        print(f"Live run: {len(SCENARIOS)} scenarios, calls {LIVE_CALL_INTERVAL:.0f}s apart for the free tier, "
+              f"stops starting new scenarios after {LIVE_RUN_BUDGET / 60:.0f} min.", file=sys.stderr, flush=True)
+    rows = run_suite(names, live=args.live, on_row=save if args.live else None)
+    summary = summarise(rows)
+    save(rows)
     if args.md_path:
         with open(args.md_path, "w") as fh:
             fh.write(to_markdown(rows, summary))

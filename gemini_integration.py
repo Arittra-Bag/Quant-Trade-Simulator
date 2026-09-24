@@ -59,7 +59,9 @@ class GeminiAnalyzer:
         if API_KEY:
             try:
                 from google import genai
-                self.client = genai.Client(api_key=API_KEY)
+                from google.genai import types
+                self.client = genai.Client(api_key=API_KEY, http_options=types.HttpOptions(
+                    timeout=int(float(os.environ.get("GEMINI_CALL_TIMEOUT", "30")) * 1000)))
             except Exception as e:
                 print(f"Gemini client unavailable, falling back to the baseline: {e}")
 
