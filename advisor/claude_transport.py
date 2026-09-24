@@ -16,9 +16,8 @@ Used by the eval runner to compare providers. The app itself stays on Gemini.
 """
 import copy
 import json
-import time
 
-from .advisor import AdviceInvalid, RateLimited, Transport, _parse_json
+from .advisor import AnswerTruncated, SpendCapReached, Transport, _parse_json
 from .schema import ADVICE_SCHEMA
 from .tools import TOOL_DECLARATIONS
 
@@ -72,32 +71,29 @@ class ClaudeTransport(Transport):
     """
     `client` is an `anthropic.Anthropic()`. `effort` sets output_config.effort on models that
     take it (not Haiku 4.5). `min_interval` spaces requests like GeminiTransport's.
+    `budget_usd`, when set, is checked before every call: once the request has spent it, the
+    next call is not sent, so one request overshoots by at most the call in flight.
     """
 
     name = "claude"
 
-    def __init__(self, client, model, effort=None, max_tokens=8000, min_interval=0.0):
+    def __init__(self, client, model, effort=None, max_tokens=16000, min_interval=0.0, budget_usd=None):
         self.client = client
         self.model = model
         self.effort = effort
         self.max_tokens = max_tokens
         self.min_interval = min_interval
+        self.budget_usd = budget_usd
         self.answered_by = []
         self.usage = {}
-        self._last_request = 0.0
         self._messages = None
         self._pending = []
 
     def begin(self):
-        """Start a request: a fresh conversation and fresh usage totals."""
-        wait = self.min_interval - (time.time() - self._last_request)
-        if wait > 0:
-            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
-        self._last_request = time.time()
+        """Start a request: pacing, a fresh conversation, fresh usage totals."""
+        self._start_request()
         self._messages = None
         self._pending = []
-        self.answered_by = []
-        self.usage = {}
 
     @property
     def cost_usd(self):
@@ -116,6 +112,8 @@ class ClaudeTransport(Transport):
                  **({"is_error": True} if isinstance(call["result"], dict) and call["result"].get("error") else {})}
                 for use_id, call in zip(self._pending, dispatched)]})
 
+        if self.budget_usd is not None and (self.cost_usd or 0.0) >= self.budget_usd:
+            raise SpendCapReached(f"Rate limited: the ${self.budget_usd:.2f} spend cap was reached")
         output_config = {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}}
         if self.effort:
             output_config["effort"] = self.effort
@@ -134,7 +132,8 @@ class ClaudeTransport(Transport):
         if response.stop_reason == "refusal":
             raise RuntimeError(f"the model declined: {getattr(response, 'stop_details', None)}")
         if response.stop_reason == "max_tokens":
-            raise AdviceInvalid(f"the answer was cut off at max_tokens={self.max_tokens}")
+            # The provider stopped the model, as with a timeout: an errored run, not a scored one.
+            raise AnswerTruncated(f"the answer was cut off at max_tokens={self.max_tokens}")
 
         uses = [b for b in response.content if b.type == "tool_use"]
         if uses:
@@ -148,5 +147,5 @@ class ClaudeTransport(Transport):
 
     def _count(self, response):
         usage = getattr(response, "usage", None)
-        for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
-            self.usage[key] = self.usage.get(key, 0) + (getattr(usage, key, 0) or 0)
+        self._add_usage(**{key: getattr(usage, key, 0) for key in (
+            "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")})

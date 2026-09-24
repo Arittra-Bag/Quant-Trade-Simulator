@@ -66,3 +66,6 @@ evals/results.json
 
 # Local virtualenv
 .venv/
+# Advisor requests per day, written by the app
+advisor_usage.json
+advisor_usage.json.*.tmp

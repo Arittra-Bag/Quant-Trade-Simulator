@@ -569,6 +569,7 @@ def test_app_adapter_completes_a_live_request_and_spaces_out_clicks():
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, ["m"], "m", 5
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None
     first = analyzer.analyze(DEEP, 1_000, side="buy")
     assert first["success"] and first["source"] == "gemini", first
     second = analyzer.analyze(DEEP, 1_000, side="buy")
@@ -584,6 +585,7 @@ def test_app_adapter_gives_each_request_its_own_conversation():
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = _client([]), ["m"], "m", 0
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None
     first = analyzer._transport("buy", 1_000, "Market")
     second = analyzer._transport("buy", 1_000, "Market")
     assert first is not second
@@ -668,6 +670,7 @@ def _live_analyzer(client, models=("flash", "lite")):
     analyzer = gi.GeminiAnalyzer.__new__(gi.GeminiAnalyzer)
     analyzer.client, analyzer.models, analyzer.model, analyzer.min_interval = client, list(models), models[0], 0
     analyzer.cooldown = ModelCooldown()
+    analyzer.daily_requests, analyzer.usage_file = 150, None  # in memory: tests never touch the real file
     return analyzer
 
 
@@ -709,6 +712,7 @@ def test_the_notice_says_when_every_model_is_resting():
     analyzer.cooldown.record("lite", _Deadline())
     result = analyzer.analyze(DEEP, 1_000, side="buy")
     assert result["success"] and "resting" in result["notice"]
+    assert "free" not in result["notice"]
     assert "every model is resting" in result["gemini_error"]  # the real cause is kept
 
 
@@ -893,3 +897,53 @@ def test_the_report_shows_live_cost_and_is_not_gated(monkeypatch):
     md = runner.to_markdown(rows, summary)
     assert "| `claude_haiku` | live model | 50.0% |" in md and "$0.0125" in md and "2.5 s" in md
     assert "No row here was produced against a live model" not in md
+
+
+def test_spend_counts_errored_runs_that_reached_the_api():
+    rows = [
+        {"candidate": "claude_haiku", "scenario": "a", "score": 1.0, "critical_failures": [], "checks": [],
+         "latency_ms": 10.0, "errored": False, "errors": [], "tokens_in": 100, "tokens_out": 0, "cost_usd": 0.01},
+        {"candidate": "claude_haiku", "scenario": "b", "score": 0.0, "critical_failures": [], "checks": [],
+         "latency_ms": 0.0, "errored": True, "errors": ["529"], "tokens_in": 100, "tokens_out": 0,
+         "cost_usd": 0.03},
+    ]
+    entry = summarise(rows)["claude_haiku"]
+    assert entry["mean_cost_usd"] == 0.02 and entry["score"] == 1.0
+
+
+def test_a_missing_anthropic_package_skips_claude(monkeypatch):
+    import builtins
+
+    import evals.runner as runner
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "set")
+    real_import = builtins.__import__
+
+    def no_anthropic(name, *args, **kwargs):
+        if name == "anthropic":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_anthropic)
+    assert runner._live_transport_factory("claude_haiku") is None
+
+
+def test_the_daily_count_survives_a_restart(tmp_path):
+    pytest.importorskip("google.genai")
+    usage_file = str(tmp_path / "usage.json")
+    first = _live_analyzer(_client(_three_call_run()), models=("m",))
+    first.usage_file, first.daily_requests = usage_file, 1
+    assert first.analyze(DEEP, 1_000, side="buy")["source"] == "gemini"
+    restarted = _live_analyzer(_client(_three_call_run()), models=("m",))  # a new worker process
+    restarted.usage_file, restarted.daily_requests = usage_file, 1
+    capped = restarted.analyze(DEEP, 1_000, side="buy")
+    assert capped["source"] == "baseline" and "allowance" in capped["notice"]
+    assert restarted.client.models.calls == []
+
+
+def test_a_click_that_never_reaches_gemini_costs_no_allowance():
+    pytest.importorskip("google.genai")
+    analyzer = _live_analyzer(_client([]))
+    analyzer.cooldown.record("flash", _DailyQuota())
+    analyzer.cooldown.record("lite", _Deadline())
+    analyzer.analyze(DEEP, 1_000, side="buy")
+    assert analyzer._requests_today() == 0

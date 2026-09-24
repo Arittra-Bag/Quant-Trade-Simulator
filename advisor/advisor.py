@@ -107,9 +107,28 @@ class Transport:
 
     name = "abstract"
     model = ""
+    min_interval = 0.0  # seconds between requests; 0 for none
+    _last_request = 0.0
 
     def begin(self):
         """Called once at the start of every advisor request, before the first propose."""
+
+    def _start_request(self):
+        """
+        Shared start of a live request: fresh usage and answer log, then request pacing.
+        Usage is reset first, so a request the pacing refuses reports no tokens of its own
+        rather than the previous request's.
+        """
+        self.usage, self.answered_by = {}, []
+        wait = self.min_interval - (time.time() - self._last_request)
+        if wait > 0:
+            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
+        self._last_request = time.time()
+
+    def _add_usage(self, **counts):
+        """Add token counts to the current request's totals."""
+        for key, value in counts.items():
+            self.usage[key] = self.usage.get(key, 0) + (value or 0)
 
     def propose(self, system_prompt, user_prompt, history):
         raise NotImplementedError
@@ -282,6 +301,14 @@ class DailyCapReached(RateLimited):
     """The day's allowance of model requests is spent, so the request was not sent."""
 
 
+class SpendCapReached(RateLimited):
+    """The run's spending limit was reached, so the next call was not sent."""
+
+
+class AnswerTruncated(RuntimeError):
+    """The provider cut the answer off at its output limit before the model finished."""
+
+
 class AdviceInvalid(ValueError):
     """The model answered, but its answer could not be parsed or failed validation."""
 
@@ -417,15 +444,11 @@ class GeminiTransport(Transport):
         self._pending = 0
 
     def begin(self):
-        wait = self.min_interval - (time.time() - self._last_request)
-        if wait > 0:
-            raise RateLimited(f"Rate limited, try again in {wait:.0f}s")
-        self._last_request = time.time()
+        """Start a request: pacing, a fresh conversation, the deadline clock."""
+        self._start_request()
         self._deadline = time.monotonic() + self.deadline_s if self.deadline_s else None
         self._contents = None
         self._pending = 0
-        self.answered_by = []
-        self.usage = {}
 
     def _pace(self):
         wait = self.call_interval - (time.time() - self._last_attempt)
@@ -476,10 +499,8 @@ class GeminiTransport(Transport):
             return
         read = lambda key: getattr(meta, key, 0) or 0  # noqa: E731
         cached = read("cached_content_token_count")
-        for key, value in (("input_tokens", read("prompt_token_count") - cached),
-                           ("cache_read_input_tokens", cached),
-                           ("output_tokens", read("candidates_token_count") + read("thoughts_token_count"))):
-            self.usage[key] = self.usage.get(key, 0) + value
+        self._add_usage(input_tokens=read("prompt_token_count") - cached, cache_read_input_tokens=cached,
+                        output_tokens=read("candidates_token_count") + read("thoughts_token_count"))
 
     def _within_deadline(self, config):
         """
@@ -602,7 +623,7 @@ def is_transient(error):
 
 def is_upstream(error):
     """The provider, or our own request throttle, stopped the run before the model answered."""
-    return is_transient(error) or isinstance(error, RateLimited)
+    return is_transient(error) or isinstance(error, (RateLimited, AnswerTruncated))
 
 
 

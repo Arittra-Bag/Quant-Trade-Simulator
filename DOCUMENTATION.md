@@ -46,7 +46,8 @@ The application integrates Google's Gemini AI to provide market analysis and tra
 The Gemini integration:
 - Uses the `google-genai` SDK with `gemini-3.8-flash` by default (override with `GEMINI_MODEL`), which assumes a paid-tier key. One click is up to seven calls, and on the free tier 3.8 Flash allows only 5 a minute and 20 a day, so a free-tier deployment should set `GEMINI_MODEL=gemini-3.5-flash-lite` (15 a minute, 500 a day)
 - Falls back to `gemini-3.5-flash-lite` (override with `GEMINI_FALLBACK_MODELS`) if the default is retired, busy or out of quota
-- Caps advisor requests at `GEMINI_DAILY_REQUESTS` (default 150) per UTC day, because the demo is public and the key is paid; past the cap the panel answers from the rules and says so
+- Caps advisor requests at `GEMINI_DAILY_REQUESTS` (default 150) per UTC day, because the demo is public and the key is paid; past the cap the panel answers from the rules and says so. Only requests that reach Gemini count, and the count is kept in `advisor_usage.json` so a restarted worker does not start the day again
+- That cap lives in the app, so a host that wipes its disk on redeploy resets it. The hard ceiling belongs on the key: in Google Cloud, lower the Generative Language API's requests-per-day quota for the key's project (APIs & Services, then the API's Quotas page), and add a billing budget alert
 - A model that fails is rested rather than tried first on every call: until midnight Pacific for a spent daily quota, for Google's `retryDelay` (or 60 s) for a per-minute one, and 30 s when busy or timed out
 - Each call times out after `GEMINI_CALL_TIMEOUT` (20 s) and a click after `GEMINI_DEADLINE` (40 s)
 - When Gemini cannot answer, the panel shows the rules-based read with a one-line note saying why, not the raw API error

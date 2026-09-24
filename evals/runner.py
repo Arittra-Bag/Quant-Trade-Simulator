@@ -27,6 +27,11 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv  # noqa: E402
+
+# Before the settings below are read, so a local .env sets them as well as the API keys.
+load_dotenv()
+
 from advisor.advisor import run_advisor  # noqa: E402
 from evals.candidates import CANDIDATES, DESCRIPTIONS, REAL_CANDIDATES  # noqa: E402
 from evals.graders import grade, ground_truth  # noqa: E402
@@ -145,6 +150,8 @@ def run_suite(candidate_names, live=(), on_row=None, max_usd=LIVE_MAX_USD):
             elif spent >= max_usd:
                 row = _skipped(name, scenario, f"not run: the ${max_usd:.2f} spend cap was reached")
             else:
+                if hasattr(transport, "budget_usd"):
+                    transport.budget_usd = max_usd - spent  # checked before every call, not just here
                 row = run_one(name, scenario, live_transport=transport)
                 spent += row["cost_usd"] or 0.0
             rows.append(row)
@@ -166,7 +173,11 @@ def _live_transport_factory(name):
     if provider == "claude":
         if not os.environ.get("ANTHROPIC_API_KEY"):
             return None
-        import anthropic
+        try:
+            import anthropic
+        except ImportError:  # a dev dependency: pip install -r requirements-dev.txt
+            print(f"{name}: the anthropic package is not installed.", file=sys.stderr)
+            return None
         from advisor.claude_transport import ClaudeTransport
         client = anthropic.Anthropic(timeout=LIVE_CALL_TIMEOUT, max_retries=1)
         return lambda: ClaudeTransport(client, model, **options)
@@ -191,6 +202,12 @@ def summarise(rows):
         entry = by_candidate.setdefault(row["candidate"], {
             "scenarios": 0, "errored": 0, "score_sum": 0.0, "critical": 0, "latency_ms": 0.0,
             "failed_checks": {}})
+        # Spend counts every run that reached the API, errored or not: it was billed either way.
+        if row.get("tokens_in") or row.get("tokens_out"):
+            entry["billed_runs"] = entry.get("billed_runs", 0) + 1
+            entry["tokens"] = entry.get("tokens", 0) + row.get("tokens_in", 0) + row.get("tokens_out", 0)
+            if row.get("cost_usd") is not None:
+                entry["cost_usd"] = entry.get("cost_usd", 0.0) + row["cost_usd"]
         if row.get("errored"):
             entry["errored"] += 1
             continue
@@ -198,9 +215,6 @@ def summarise(rows):
         entry["score_sum"] += row["score"]
         entry["critical"] += 1 if row["critical_failures"] else 0
         entry["latency_ms"] += row["latency_ms"]
-        entry["tokens"] = entry.get("tokens", 0) + row.get("tokens_in", 0) + row.get("tokens_out", 0)
-        if row.get("cost_usd") is not None:
-            entry["cost_usd"] = entry.get("cost_usd", 0.0) + row["cost_usd"]
         for check in row["checks"]:
             if not check["passed"]:
                 entry["failed_checks"][check["name"]] = entry["failed_checks"].get(check["name"], 0) + 1
@@ -209,8 +223,9 @@ def summarise(rows):
         entry["score"] = round(entry["score_sum"] / n, 4) if entry["scenarios"] else None
         entry["mean_latency_ms"] = round(entry["latency_ms"] / n, 2)
         entry["clean_scenarios"] = entry["scenarios"] - entry["critical"]
-        entry["mean_tokens"] = round(entry.pop("tokens", 0) / n)
-        entry["mean_cost_usd"] = round(entry["cost_usd"] / n, 5) if "cost_usd" in entry else None
+        billed = max(entry.pop("billed_runs", 0), 1)
+        entry["mean_tokens"] = round(entry.pop("tokens", 0) / billed)
+        entry["mean_cost_usd"] = round(entry["cost_usd"] / billed, 5) if "cost_usd" in entry else None
     return by_candidate
 
 
@@ -326,16 +341,15 @@ def _live_notes(summary):
         "real API: a single sample per scenario, so a difference of a few points between models is noise, "
         "not a ranking. A scenario the provider failed (quota, overload, timeout) is counted as errored "
         "and left out of the score, because it measured the provider rather than the advisor.",
-        "- Cost is Claude's list price from each response's token usage, prompt caching included. Gemini "
-        "rows show tokens only; they were billed to Google Cloud credit.",
+        "- Tokens and cost are per run that reached the API, errored runs included, because those were "
+        "billed too. Cost is Claude's list price from each response's token usage, prompt caching included. "
+        "Gemini rows show tokens only; they were billed to Google Cloud credit.",
         "- Live models are reported, not gated: CI never calls an API, and a model scoring below the "
         "baseline is a finding rather than a regression.",
     ]
 
 
 def main(argv=None):
-    from dotenv import load_dotenv
-    load_dotenv()  # a local .env holding GEMINI_API_KEY / ANTHROPIC_API_KEY works like exported keys
     parser = argparse.ArgumentParser(description="Run the advisor eval suite.")
     parser.add_argument("--candidates", default=",".join(CANDIDATES),
                         help="comma-separated candidate names (default: all)")

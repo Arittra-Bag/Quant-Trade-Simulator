@@ -119,9 +119,30 @@ def test_a_refusal_is_reported_not_scored_as_advice():
     assert not result.ok and not result.upstream_error and "declined" in result.errors[0]
 
 
-def test_a_cut_off_answer_is_invalid():
+def test_a_cut_off_answer_is_errored_not_scored():
+    """The provider stopped the model; the row measures the output limit, not the advisor."""
     result, _, _ = _run([_message([{"type": "text", "text": '{"sentiment": "Bull'}], "max_tokens")])
-    assert not result.ok and "max_tokens" in result.errors[0]
+    assert not result.ok and result.upstream_error and "max_tokens" in result.errors[0]
+
+
+def test_the_budget_is_checked_before_every_call():
+    client, sent = _client([
+        _message([_tool_use("quote_order", {"side": "buy", "notional_usd": 1000})], "tool_use"),
+        _message([{"type": "text", "text": "{}"}], "end_turn"),
+    ])
+    transport = ClaudeTransport(client, "claude-haiku-4-5", budget_usd=0.0001)
+    result = run_advisor(transport, DEEP, "buy", 1_000)
+    assert len(sent) == 1  # the first call spent $0.002, so the second was never sent
+    assert not result.ok and result.upstream_error and "spend cap" in result.errors[0]
+
+
+def test_a_refused_request_reports_no_tokens_of_its_own():
+    reply = _message([{"type": "text", "text": json.dumps({**_advice(), "limit_price": 0})}], "end_turn")
+    client, _ = _client([reply])
+    transport = ClaudeTransport(client, "claude-haiku-4-5", min_interval=60)
+    assert run_advisor(transport, DEEP, "buy", 1_000).ok and transport.usage
+    refused = run_advisor(transport, DEEP, "buy", 1_000)
+    assert not refused.ok and transport.usage == {} and transport.cost_usd == 0
 
 
 def test_sdk_errors_classify_by_status_code():
