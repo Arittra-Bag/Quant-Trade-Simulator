@@ -81,9 +81,10 @@ def test_cli_writes_the_report(tmp_path):
     path = tmp_path / "tape.jsonl"
     path.write_text("\n".join(json.dumps(r) for r in _books([2.0] * 121) + [_trade(5, MID - 1, 0.1, "sell")]))
     report = tmp_path / "POSTTRADE.md"
-    assert main([str(path), "--report", str(report)]) == 0
+    assert main([str(path), "--notional", "250000,2500000", "--report", str(report)]) == 0
     text = report.read_text()
     assert "Refill error" in text and "Filled from the tape" in text and "2 non-overlapping windows" in text
+    assert "## $250,000 per order" in text and "## $2,500,000 per order" in text
 
 
 def test_an_empty_recording_scores_nothing(tmp_path):
