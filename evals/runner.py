@@ -288,10 +288,13 @@ def main(argv=None):
 
     def save(rows):
         if args.json_path:
-            with open(args.json_path, "w") as fh:
+            # Write a temp file, then swap it in, so a cut-off save keeps the last good results.
+            tmp = args.json_path + ".tmp"
+            with open(tmp, "w") as fh:
                 json.dump({"generated_at": datetime.now(timezone.utc).isoformat(),
                            "scenarios": [s["id"] for s in SCENARIOS],
                            "summary": summarise(rows), "rows": rows}, fh, indent=2)
+            os.replace(tmp, args.json_path)
 
     if args.live:
         print(f"Live run: {len(SCENARIOS)} scenarios, calls {LIVE_CALL_INTERVAL:.0f}s apart for the free tier, "

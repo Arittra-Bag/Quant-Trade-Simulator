@@ -416,6 +416,15 @@ def test_a_live_run_stops_starting_scenarios_when_its_budget_is_spent(monkeypatc
     assert summarise(rows)["gemini_live"]["score"] is None
 
 
+def test_saved_results_replace_the_file_whole(tmp_path, monkeypatch):
+    import evals.runner as runner
+    monkeypatch.setattr(runner, "SCENARIOS", runner.SCENARIOS)  # --scenario narrows it globally
+    out = tmp_path / "results.json"
+    out.write_text("old")
+    runner.main(["--candidates", "rules", "--scenario", SCENARIOS[0]["id"], "--json", str(out), "--quiet"])
+    assert json.loads(out.read_text())["rows"]
+    assert [p.name for p in tmp_path.iterdir()] == ["results.json"]  # no temp file left behind
+
 def test_live_calls_are_paced_across_requests(monkeypatch):
     pytest.importorskip("google.genai")
     slept = _no_sleep(monkeypatch)
